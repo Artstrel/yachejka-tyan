@@ -15,8 +15,8 @@ from keep_alive import start_server
 # ==========================================
 
 # 1. Читаем переменные напрямую
-tg_token = os.environ.get("TELEGRAM_TOKEN", "")
-gemini_key = os.environ.get("GEMINI_API_KEY", "")
+tg_token = os.environ.get("TELEGRAM_TOKEN", "8474625486:AAGoQYG3Taswf3InQdR1eqmaj7GpHLv9Nh0")
+gemini_key = os.environ.get("GEMINI_API_KEY", "AIzaSyCDY0660_UKWFB2hEN1WOSjh-ZHqtMN8Z4")
 
 # 2. Проверяем Токен Телеграм
 print(f"1. TELEGRAM_TOKEN:")
