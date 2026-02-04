@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import logging
 from collections import deque
@@ -7,23 +8,38 @@ from aiogram.enums import ParseMode
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-# === НАЧАЛО ДЕБАГА ===
-print("🔍 СПИСОК ВСЕХ ПЕРЕМЕННЫХ НА СЕРВЕРЕ:")
-for key in os.environ:
-    if "TOKEN" in key or "KEY" in key:
-        print(f"👉 Найден ключ: '{key}'") # Кавычки покажут, есть ли пробелы
-# === КОНЕЦ ДЕБАГА ===
+# 1. Читаем переменные напрямую
+tg_token = os.environ.get("TELEGRAM_TOKEN", "")
+gemini_key = os.environ.get("GEMINI_API_KEY", "")
 
-# === БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ ===
-# Теперь ключи берутся из "сейфа" сервера, а не из файла
-TELEGRAM_TOKEN = os.getenv("8474625486:AAGoQYG3Taswf3InQdR1eqmaj7GpHLv9Nh0")
-GEMINI_API_KEY = os.getenv("AIzaSyCDY0660_UKWFB2hEN1WOSjh-ZHqtMN8Z4")
+# 2. Проверяем Токен Телеграм
+print(f"1. TELEGRAM_TOKEN:")
+print(f"   - Существует в системе? {'ДА' if 'TELEGRAM_TOKEN' in os.environ else 'НЕТ'}")
+print(f"   - Длина значения: {len(tg_token)} символов")
+if len(tg_token) > 4:
+    print(f"   - Начало: '{tg_token[:4]}...'")
+else:
+    print(f"   - Значение: '{tg_token}' (ПУСТО?)")
 
-# Проверка, чтобы не забыть
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    print("❌ ОШИБКА: Ключи не найдены! Проверьте переменные окружения.")
-    exit()
+# 3. Проверяем Ключ Gemini
+print(f"2. GEMINI_API_KEY:")
+print(f"   - Существует в системе? {'ДА' if 'GEMINI_API_KEY' in os.environ else 'НЕТ'}")
+print(f"   - Длина значения: {len(gemini_key)} символов")
+if len(gemini_key) > 4:
+    print(f"   - Начало: '{gemini_key[:4]}...'")
+else:
+    print(f"   - Значение: '{gemini_key}' (ПУСТО?)")
 
+print("--- КОНЕЦ ДИАГНОСТИКИ ---")
+
+# Если ключи пустые — останавливаемся
+if len(tg_token) < 5 or len(gemini_key) < 5:
+    print("❌ ОШИБКА: Один из ключей пустой или слишком короткий!")
+    sys.exit()
+
+# Присваиваем нормальным переменным
+TELEGRAM_TOKEN = tg_token
+GEMINI_API_KEY = gemini_key
 # ==========================================
 # ⚙️ НАСТРОЙКИ (МЕНЯТЬ ТОЛЬКО ЗДЕСЬ)
 # ==========================================
