@@ -7,6 +7,24 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from keep_alive import start_server
+
+# --- ЗАПУСК ---
+async def main():
+    print("Запускаю веб-сервер для Koyeb...")
+    
+    # !!! ЗАПУСК ЗАГЛУШКИ !!!
+    await start_server()
+    
+    print("Бот запущен!...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен.")
 
 # 1. Читаем переменные напрямую
 tg_token = os.environ.get("TELEGRAM_TOKEN", "")
