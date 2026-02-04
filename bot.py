@@ -7,6 +7,13 @@ from aiogram.enums import ParseMode
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
+# === НАЧАЛО ДЕБАГА ===
+print("🔍 СПИСОК ВСЕХ ПЕРЕМЕННЫХ НА СЕРВЕРЕ:")
+for key in os.environ:
+    if "TOKEN" in key or "KEY" in key:
+        print(f"👉 Найден ключ: '{key}'") # Кавычки покажут, есть ли пробелы
+# === КОНЕЦ ДЕБАГА ===
+
 # === БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ ===
 # Теперь ключи берутся из "сейфа" сервера, а не из файла
 TELEGRAM_TOKEN = os.getenv("8474625486:AAGoQYG3Taswf3InQdR1eqmaj7GpHLv9Nh0")
