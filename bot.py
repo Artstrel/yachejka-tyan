@@ -76,7 +76,7 @@ safety_settings = {
 }
 
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash", # Рекомендую использовать актуальную модель
+    model_name="gemini-3-flash-preview", # Рекомендую использовать актуальную модель
     safety_settings=safety_settings,
     system_instruction=BOT_PERSONA,
     generation_config={"temperature": 1.0}
