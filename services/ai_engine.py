@@ -17,7 +17,10 @@ safety_settings = {
 model = genai.GenerativeModel(
     model_name="gemini-3-flash-preview", # Используем Flash как в документации (быстро и дешево)
     safety_settings=safety_settings,
-    generation_config={"temperature": 1.1}
+    generation_config={
+        "temperature": 1.1,
+        "max_output_tokens": 150, # Жесткое ограничение длины ответа
+    }
 )
 
 PERSONA = """

@@ -1,107 +1,161 @@
 import asyncio
 import logging
 import sys
-import os
+import socket
+
+# -----------------------------------------------------------
+# 🚑 ЛЕЧЕНИЕ СЕТИ HUGGING FACE (FIX IPv6/DNS Error)
+# -----------------------------------------------------------
+try:
+    # Сохраняем оригинальную функцию
+    orig_getaddrinfo = socket.getaddrinfo
+
+    # Создаем обертку, которая подменяет IPv6 на IPv4
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        # Передаем аргументы позиционно (важно для socket!)
+        return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    # Подменяем функцию в библиотеке socket
+    socket.getaddrinfo = getaddrinfo_ipv4
+except Exception as e:
+    pass
+# -----------------------------------------------------------
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiohttp import web  # Импортируем веб-сервер aiohttp
 
+# Импорты наших модулей
 import config
 from database.db import Database
 from services.ai_engine import generate_response
+from keep_alive import start_server
 
-# Настройка логгера
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-logger = logging.getLogger(__name__)
+# Логирование
+logging.basicConfig(level=logging.INFO)
 
-# Инициализация
+# Инициализация глобальных переменных
 dp = Dispatcher()
+bot = None
 db = Database(config.DATABASE_URL)
-bot = Bot(
-    token=config.TELEGRAM_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
-)
 
-# --- ВЕБ-СЕРВЕР (HEALTH CHECK) ---
-async def health_check(request):
-    return web.Response(text="I am alive!", status=200)
+# --- Хэндлеры ---
 
-async def start_web_server():
-    """Запускает легкий веб-сервер на aiohttp"""
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    # Render передает порт через переменную окружения PORT
-    port = int(os.environ.get("PORT", 10000))
-    
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logger.info(f"✅ Веб-сервер запущен на порту {port}")
-
-# --- ХЭНДЛЕРЫ ---
 @dp.message(F.text | F.photo)
 async def main_handler(message: types.Message):
-    user = message.from_user.first_name
-    text = message.text or message.caption or ""
+    global bot
     
-    logger.info(f"📩 Сообщение от {user}")
+    # Проверка: отвечать ли на сообщение?
+    bot_info = await bot.get_me()
+    is_mentioned = message.text and f"@{bot_info.username}" in message.text
+    is_reply_to_me = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
+    
+    # Если это не обращение напрямую, отвечаем с шансом 15%
+    if not (is_mentioned or is_reply_to_me) and random.random() > 0.15:
+        return
+    
+    # 1. Пропускаем пустые сообщения
+    if not text and not message.photo:
+        return
 
-    if config.DATABASE_URL:
-        asyncio.create_task(db.add_message(message.chat.id, message.from_user.id, user, 'user', text))
-
+    # 2. Обработка картинки
     image_data = None
+    status_msg = None
+    
     if message.photo:
-        status_msg = await message.reply("👀")
+        try:
+            status_msg = await bot.send_message(chat_id, "👀 Смотрю...", reply_to_message_id=message.message_id)
+        except Exception:
+            pass # Не страшно, если не отправилось
+            
+        # Скачивание фото
         try:
             photo = message.photo[-1]
             file = await bot.get_file(photo.file_id)
-            downloaded = await bot.download_file(file.file_path)
+            file_path = file.file_path
+            downloaded = await bot.download_file(file_path)
             
             import io
             from PIL import Image
             image_data = Image.open(io.BytesIO(downloaded.read()))
+            text = text or "[Отправил фото]"
         except Exception as e:
-            logger.error(f"Ошибка фото: {e}")
-        finally:
-            await status_msg.delete()
+            logging.error(f"Ошибка фото: {e}")
+            text = text or "[Ошибка загрузки фото]"
 
-    try:
-        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        ai_reply = await generate_response(db, message.chat.id, text, image_data)
-        await message.reply(ai_reply)
+    else:
+        # Индикатор печати
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            pass
 
-        if config.DATABASE_URL:
-             bot_user = await bot.get_me()
-             asyncio.create_task(db.add_message(message.chat.id, bot_user.id, "Bot", 'model', ai_reply))
-
-    except Exception as e:
-        logger.error(f"Ошибка AI: {e}")
-        await message.reply("Что-то пошло не так...")
-
-# --- ЗАПУСК ---
-async def main():
-    logger.info("🚀 Запуск на Render (Native Async Mode)...")
-    
-    # 1. Запускаем веб-сервер (теперь через await, так как это aiohttp!)
-    await start_web_server()
-
-    # 2. Подключаем БД
+    # 3. Сохраняем сообщение в БД
     if config.DATABASE_URL:
-        await db.connect()
-        logger.info("✅ База данных подключена")
+        try:
+            await db.add_message(chat_id, message.from_user.id, user_name, 'user', text)
+        except Exception as e:
+            logging.error(f"Ошибка БД (сохранение): {e}")
 
-    # 3. Чистим вебхуки и стартуем
+    # 4. Генерация ответа
+    ai_reply = await generate_response(db, chat_id, text, image_data)
+
+    # 5. Отправка ответа
+    try:
+        await message.reply(ai_reply)
+    except Exception as e:
+        # Если Markdown сломался, отправляем как простой текст
+        try:
+            await message.reply(ai_reply, parse_mode=None)
+        except Exception as e2:
+            logging.error(f"Не удалось отправить ответ: {e2}")
+
+    # 6. Сохраняем ответ бота в БД
+    if config.DATABASE_URL:
+        try:
+            bot_user = await bot.get_me()
+            await db.add_message(chat_id, bot_user.id, "Ячейка-тян", 'model', ai_reply)
+        except Exception as e:
+            logging.error(f"Ошибка БД (лог бота): {e}")
+        
+    # Удаляем сообщение "Смотрю..."
+    if status_msg:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+# --- Запуск ---
+
+async def main():
+    global bot
+    print("🚀 Запуск Ячейки-тян 2.0...")
+    
+    # Инициализация бота (обычная, без сложных коннекторов)
+    bot = Bot(
+        token=config.TELEGRAM_TOKEN, 
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
+    
+    # Подключение к БД
+    if config.DATABASE_URL:
+        try:
+            await db.connect()
+            print("✅ База данных подключена")
+        except Exception as e:
+            print(f"❌ Ошибка БД: {e}")
+            print("⚠️ Бот работает без памяти")
+    
+    # Запуск веб-сервера (для HF Spaces)
+    await start_server()
+    
+    # Запуск поллинга
+    print("📡 Поллинг запущен...")
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("📡 Поллинг запущен")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен")
+    except KeyboardInterrupt:
+        print("Бот остановлен")
