@@ -60,7 +60,7 @@ async def main_handler(message: types.Message):
     # Если это НЕ прямое обращение...
     if not (is_mentioned or is_reply_to_me):
         # ...и рандом не выпал (шанс 3% - так безопаснее для чата на 800 чел)
-        if random.random() > 0.03: 
+        if random.random() > 0.15: 
             return
             
     # 4. Пропускаем совсем пустые сообщения (без фото и текста)
