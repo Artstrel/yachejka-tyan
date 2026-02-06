@@ -4,10 +4,9 @@ from datetime import datetime
 import sys
 import os
 import asyncio
+import random  # <--- Добавляем для выборки стикера
 
-# Добавляем родительскую директорию в путь поиска, если запускаем файл напрямую
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import config
 
 class Database:
@@ -17,18 +16,17 @@ class Database:
         self.db = None
 
     async def connect(self):
-        """Подключение к MongoDB"""
         try:
             self.client = AsyncIOMotorClient(self.dsn)
-            # Motor ленивый, он не подключится пока мы не сделаем запрос.
-            # Сделаем тестовую команду ping, чтобы убедиться в связи.
             await self.client.admin.command('ping')
-            
             self.db = self.client[config.DB_NAME]
             
-            # Создаем индексы (фон)
+            # Индексы для сообщений
             await self.db.messages.create_index("chat_id")
             await self.db.messages.create_index([("chat_id", 1), ("created_at", -1)])
+            
+            # Индекс для стикеров (чтобы не дублировать)
+            await self.db.stickers.create_index("file_id", unique=True)
             
             logging.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
@@ -41,7 +39,7 @@ class Database:
             "chat_id": chat_id,
             "user_id": user_id,
             "user_name": user_name,
-            "role": role,          # 'user' или 'model'
+            "role": role,
             "content": content,
             "created_at": datetime.utcnow()
         }
@@ -49,48 +47,45 @@ class Database:
 
     async def get_context(self, chat_id, limit=20):
         """Получение истории чата"""
-        cursor = self.db.messages.find(
-            {"chat_id": chat_id}
-        ).sort("created_at", -1).limit(limit)
-        
+        cursor = self.db.messages.find({"chat_id": chat_id}).sort("created_at", -1).limit(limit)
         history = await cursor.to_list(length=limit)
         return reversed(history)
 
     async def get_median_length(self, chat_id, limit=15):
-        """Вычисление медианной длины сообщений пользователя"""
-        cursor = self.db.messages.find(
-            {
-                "chat_id": chat_id, 
-                "role": "user",
-            }
-        ).sort("created_at", -1).limit(limit)
-        
+        """Медианная длина сообщений (для подстройки краткости)"""
+        cursor = self.db.messages.find({"chat_id": chat_id, "role": "user"}).sort("created_at", -1).limit(limit)
         messages = await cursor.to_list(length=limit)
-        
         lengths = [len(m['content']) for m in messages if len(m.get('content', '')) > 5]
-        
-        if not lengths:
-            return 0
-            
+        if not lengths: return 0
         sorted_len = sorted(lengths)
         return sorted_len[len(sorted_len) // 2]
 
+    # --- НОВЫЕ МЕТОДЫ ДЛЯ СТИКЕРОВ ---
 
-if __name__ == "__main__":
-    # Настройка логирования для теста
-    logging.basicConfig(level=logging.INFO)
-    
-    async def test_connection():
-        print("🔌 Проверка подключения к БД...")
-        if not config.DATABASE_URL:
-            print("❌ DATABASE_URL не задан в .env")
-            return
-            
+    async def add_sticker(self, file_id, emoji=None):
+        """Сохраняет стикер в коллекцию (ворует у пользователей)"""
         try:
-            db = Database(config.DATABASE_URL)
-            await db.connect()
-            print(f"✅ Успешно подключено к базе: {config.DB_NAME}")
+            await self.db.stickers.update_one(
+                {"file_id": file_id},
+                {
+                    "$setOnInsert": {
+                        "file_id": file_id, 
+                        "emoji": emoji, 
+                        "created_at": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            logging.error(f"Ошибка сохранения стикера: {e}")
 
-    asyncio.run(test_connection())
+    async def get_random_sticker(self):
+        """Достает случайный стикер из накопленной базы"""
+        try:
+            pipeline = [{"$sample": {"size": 1}}]
+            cursor = self.db.stickers.aggregate(pipeline)
+            result = await cursor.to_list(length=1)
+            return result[0]['file_id'] if result else None
+        except Exception as e:
+            logging.error(f"Ошибка получения стикера: {e}")
+            return None
