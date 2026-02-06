@@ -1,13 +1,18 @@
-from aiohttp import web
+from flask import Flask
+from threading import Thread
+import os
 
-async def handle(request):
-    return web.Response(text="I am alive! Bot is running.")
+app = Flask('')
 
-async def start_server():
-    app = web.Application()
-    app.add_routes([web.get('/', handle)])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    # Koyeb ищет порт 8000 по умолчанию
-    site = web.TCPSite(runner, '0.0.0.0', 8000)
-    await site.start()
+@app.route('/')
+def home():
+    return "I am alive!", 200
+
+def run():
+    # Render передает порт в переменную PORT. Если её нет, берем 10000 (стандарт Render)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def start_server():
+    t = Thread(target=run)
+    t.start()

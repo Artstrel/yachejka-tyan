@@ -1,148 +1,151 @@
-import os
-import sys
 import asyncio
 import logging
-from collections import deque
-import random  # Добавил импорт random, так как он использовался внутри функции
-from aiogram import Bot, Dispatcher, types
+import sys
+import socket
+
+# -----------------------------------------------------------
+# 🚑 ЛЕЧЕНИЕ СЕТИ HUGGING FACE (FIX IPv6/DNS Error)
+# -----------------------------------------------------------
+try:
+    # Сохраняем оригинальную функцию
+    orig_getaddrinfo = socket.getaddrinfo
+
+    # Создаем обертку, которая подменяет IPv6 на IPv4
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        # Передаем аргументы позиционно (важно для socket!)
+        return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    # Подменяем функцию в библиотеке socket
+    socket.getaddrinfo = getaddrinfo_ipv4
+except Exception as e:
+    pass
+# -----------------------------------------------------------
+
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from aiogram.client.default import DefaultBotProperties
+
+# Импорты наших модулей
+import config
+from database.db import Database
+from services.ai_engine import generate_response
 from keep_alive import start_server
 
-# ==========================================
-# 🛠 ДИАГНОСТИКА И ПЕРЕМЕННЫЕ
-# ==========================================
-
-# 1. Читаем переменные напрямую
-tg_token = os.environ.get("TELEGRAM_TOKEN", "8474625486:AAGoQYG3Taswf3InQdR1eqmaj7GpHLv9Nh0")
-gemini_key = os.environ.get("GEMINI_API_KEY", "AIzaSyBqEWVWBJrKggTRMpxG5n2_Rp3JzgSeJEQ")
-
-# 2. Проверяем Токен Телеграм
-print(f"1. TELEGRAM_TOKEN:")
-print(f"   - Существует в системе? {'ДА' if 'TELEGRAM_TOKEN' in os.environ else 'НЕТ'}")
-if len(tg_token) > 4:
-    print(f"   - Значение: '{tg_token[:4]}...'")
-else:
-    print(f"   - Значение: ПУСТО или слишком короткое")
-
-# 3. Проверяем Ключ Gemini
-print(f"2. GEMINI_API_KEY:")
-print(f"   - Существует в системе? {'ДА' if 'GEMINI_API_KEY' in os.environ else 'НЕТ'}")
-if len(gemini_key) > 4:
-    print(f"   - Значение: '{gemini_key[:4]}...'")
-else:
-    print(f"   - Значение: ПУСТО или слишком короткое")
-
-print("--- КОНЕЦ ДИАГНОСТИКИ ---")
-
-# Если ключи пустые — останавливаемся
-if len(tg_token) < 5 or len(gemini_key) < 5:
-    print("❌ ОШИБКА: Один из ключей пустой или слишком короткий!")
-    sys.exit()
-
-# Присваиваем нормальным переменным
-TELEGRAM_TOKEN = tg_token
-GEMINI_API_KEY = gemini_key
-
-# ==========================================
-# ⚙️ НАСТРОЙКИ (МЕНЯТЬ ТОЛЬКО ЗДЕСЬ)
-# ==========================================
-
-BOT_PERSONA = """
-ТЫ: Аниме девочка-маскот с розовыми волосами в костюме горничной. 
-ТВОЯ ЗАДАЧА: Отвечать участникам чата, помогать им, модерировать чат, но делать это с сарказмом.
-СТИЛЬ: 
-- Используй сленг.
-- Ты любишь печеньки, сигареты "Чапман" и Фридриха (Твоего кота).
-- Не будь душной. Отвечай коротко и смешно.
-"""
-
-HISTORY_LENGTH = 30
-RANDOM_REPLY_CHANCE = 0.05
-
-# ==========================================
-# 🛠 ТЕХНИЧЕСКАЯ ЧАСТЬ
-# ==========================================
-
+# Логирование
 logging.basicConfig(level=logging.INFO)
-genai.configure(api_key=GEMINI_API_KEY)
 
-safety_settings = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-}
-
-model = genai.GenerativeModel(
-    model_name="gemini-3-flash-preview", # Рекомендую использовать актуальную модель
-    safety_settings=safety_settings,
-    system_instruction=BOT_PERSONA,
-    generation_config={"temperature": 1.0}
-)
-
-bot = Bot(token=TELEGRAM_TOKEN)
+# Инициализация глобальных переменных
 dp = Dispatcher()
-chats_history = {}
+bot = None
+db = Database(config.DATABASE_URL)
 
-def update_history(chat_id, user_name, text):
-    if chat_id not in chats_history:
-        chats_history[chat_id] = deque(maxlen=HISTORY_LENGTH)
-    chats_history[chat_id].append(f"{user_name}: {text}")
+# --- Хэндлеры ---
 
-async def get_gemini_response(chat_id):
-    history_text = "\n".join(chats_history[chat_id])
-    try:
-        response = await model.generate_content_async(history_text)
-        return response.text
-    except Exception as e:
-        logging.error(f"Ошибка Gemini: {e}")
-        return "Что-то мои нейроны закоротило... (Ошибка API)"
-
-# --- ОБРАБОТЧИКИ СООБЩЕНИЙ ---
-
-@dp.message()
-async def handler(message: types.Message):
-    if not message.text:
+@dp.message(F.text | F.photo)
+async def main_handler(message: types.Message):
+    global bot
+    
+    user_name = message.from_user.first_name
+    chat_id = message.chat.id
+    text = message.text or message.caption or ""
+    
+    # 1. Пропускаем пустые сообщения
+    if not text and not message.photo:
         return
 
-    bot_info = await bot.get_me()
-    bot_username = bot_info.username
-
-    update_history(message.chat.id, message.from_user.first_name, message.text)
-
-    is_private = message.chat.type == 'private'
-    is_mentioned = f"@{bot_username}" in message.text
-    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot.id
+    # 2. Обработка картинки
+    image_data = None
+    status_msg = None
     
-    should_reply = is_private or is_mentioned or is_reply
-
-    if not should_reply and random.random() < RANDOM_REPLY_CHANCE:
-        should_reply = True
-
-    if should_reply:
-        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        ai_reply = await get_gemini_response(message.chat.id)
-        
+    if message.photo:
         try:
-            await message.reply(ai_reply, parse_mode=ParseMode.MARKDOWN)
-        except:
-            await message.reply(ai_reply)
+            status_msg = await bot.send_message(chat_id, "👀 Смотрю...", reply_to_message_id=message.message_id)
+        except Exception:
+            pass # Не страшно, если не отправилось
+            
+        # Скачивание фото
+        try:
+            photo = message.photo[-1]
+            file = await bot.get_file(photo.file_id)
+            file_path = file.file_path
+            downloaded = await bot.download_file(file_path)
+            
+            import io
+            from PIL import Image
+            image_data = Image.open(io.BytesIO(downloaded.read()))
+            text = text or "[Отправил фото]"
+        except Exception as e:
+            logging.error(f"Ошибка фото: {e}")
+            text = text or "[Ошибка загрузки фото]"
 
-        update_history(message.chat.id, "БОТ (ТЫ)", ai_reply)
+    else:
+        # Индикатор печати
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            pass
 
-# --- ЕДИНАЯ ФУНКЦИЯ ЗАПУСКА ---
+    # 3. Сохраняем сообщение в БД
+    if config.DATABASE_URL:
+        try:
+            await db.add_message(chat_id, message.from_user.id, user_name, 'user', text)
+        except Exception as e:
+            logging.error(f"Ошибка БД (сохранение): {e}")
+
+    # 4. Генерация ответа
+    ai_reply = await generate_response(db, chat_id, text, image_data)
+
+    # 5. Отправка ответа
+    try:
+        await message.reply(ai_reply)
+    except Exception as e:
+        # Если Markdown сломался, отправляем как простой текст
+        try:
+            await message.reply(ai_reply, parse_mode=None)
+        except Exception as e2:
+            logging.error(f"Не удалось отправить ответ: {e2}")
+
+    # 6. Сохраняем ответ бота в БД
+    if config.DATABASE_URL:
+        try:
+            bot_user = await bot.get_me()
+            await db.add_message(chat_id, bot_user.id, "Ячейка-тян", 'model', ai_reply)
+        except Exception as e:
+            logging.error(f"Ошибка БД (лог бота): {e}")
+        
+    # Удаляем сообщение "Смотрю..."
+    if status_msg:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+# --- Запуск ---
+
 async def main():
-    print("🚀 Инициализация...")
+    global bot
+    print("🚀 Запуск Ячейки-тян 2.0...")
     
-    # 1. Запуск веб-сервера для Koyeb (Critical for Health Check)
-    print("🌐 Запускаю веб-сервер для Koyeb (порт 8000)...")
+    # Инициализация бота (обычная, без сложных коннекторов)
+    bot = Bot(
+        token=config.TELEGRAM_TOKEN, 
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
+    
+    # Подключение к БД
+    if config.DATABASE_URL:
+        try:
+            await db.connect()
+            print("✅ База данных подключена")
+        except Exception as e:
+            print(f"❌ Ошибка БД: {e}")
+            print("⚠️ Бот работает без памяти")
+    
+    # Запуск веб-сервера (для HF Spaces)
     await start_server()
-    print("✅ Веб-сервер активен!")
     
-    # 2. Запуск Telegram бота
-    print("🤖 Бот запускается...")
+    # Запуск поллинга
+    print("📡 Поллинг запущен...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
@@ -150,4 +153,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Бот остановлен.")
+        print("Бот остановлен")
