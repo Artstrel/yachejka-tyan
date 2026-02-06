@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import socket
+import random
 
 # -----------------------------------------------------------
 # 🚑 ЛЕЧЕНИЕ СЕТИ HUGGING FACE (FIX IPv6/DNS Error)
@@ -40,36 +41,48 @@ bot = None
 db = Database(config.DATABASE_URL)
 
 # --- Хэндлеры ---
-
 @dp.message(F.text | F.photo)
 async def main_handler(message: types.Message):
     global bot
     
-    # Проверка: отвечать ли на сообщение?
+    # 1. Сначала определяем ВСЕ базовые переменные
+    chat_id = message.chat.id
+    # Получаем текст из сообщения или подписи к фото
+    text = message.text or message.caption or ""
+    user_name = message.from_user.first_name
+    
+    # 2. Проверка: это обращение к боту?
     bot_info = await bot.get_me()
-    is_mentioned = message.text and f"@{bot_info.username}" in message.text
+    is_mentioned = text and f"@{bot_info.username}" in text
     is_reply_to_me = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
     
-    # Если это не обращение напрямую, отвечаем с шансом 15%
-    if not (is_mentioned or is_reply_to_me) and random.random() > 0.15:
-        return
-    
-    # 1. Пропускаем пустые сообщения
+    # 3. Логика ответа (Фильтр)
+    # Если это НЕ прямое обращение...
+    if not (is_mentioned or is_reply_to_me):
+        # ...и рандом не выпал (шанс 3% - так безопаснее для чата на 800 чел)
+        if random.random() > 0.03: 
+            return
+            
+    # 4. Пропускаем совсем пустые сообщения (без фото и текста)
     if not text and not message.photo:
         return
 
-    # 2. Обработка картинки
+    # 5. Индикация и обработка фото
     image_data = None
     status_msg = None
     
+    # Индикатор печати (чтобы пользователь видел реакцию)
+    try:
+        await bot.send_chat_action(chat_id=chat_id, action="typing")
+    except Exception:
+        pass
+
     if message.photo:
         try:
-            status_msg = await bot.send_message(chat_id, "👀 Смотрю...", reply_to_message_id=message.message_id)
-        except Exception:
-            pass # Не страшно, если не отправилось
+            # Тут можно было бы послать "Смотрю...", но лучше не спамить лишним сообщением
+            pass 
             
-        # Скачивание фото
-        try:
+            # Скачивание фото
             photo = message.photo[-1]
             file = await bot.get_file(photo.file_id)
             file_path = file.file_path
@@ -78,52 +91,40 @@ async def main_handler(message: types.Message):
             import io
             from PIL import Image
             image_data = Image.open(io.BytesIO(downloaded.read()))
-            text = text or "[Отправил фото]"
+            
+            # Если текста нет, помечаем для логов
+            if not text:
+                text = "[Отправил фото]"
         except Exception as e:
-            logging.error(f"Ошибка фото: {e}")
+            logging.error(f"Ошибка обработки фото: {e}")
             text = text or "[Ошибка загрузки фото]"
 
-    else:
-        # Индикатор печати
-        try:
-            await bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            pass
-
-    # 3. Сохраняем сообщение в БД
+    # 6. Сохраняем сообщение ЮЗЕРА в БД
     if config.DATABASE_URL:
         try:
             await db.add_message(chat_id, message.from_user.id, user_name, 'user', text)
         except Exception as e:
-            logging.error(f"Ошибка БД (сохранение): {e}")
+            logging.error(f"Ошибка БД (сохранение юзера): {e}")
 
-    # 4. Генерация ответа
+    # 7. Генерация ответа
     ai_reply = await generate_response(db, chat_id, text, image_data)
 
-    # 5. Отправка ответа
+    # 8. Отправка ответа
     try:
         await message.reply(ai_reply)
     except Exception as e:
-        # Если Markdown сломался, отправляем как простой текст
+        # Если Markdown сломался, пробуем без него
         try:
             await message.reply(ai_reply, parse_mode=None)
         except Exception as e2:
             logging.error(f"Не удалось отправить ответ: {e2}")
 
-    # 6. Сохраняем ответ бота в БД
+    # 9. Сохраняем ответ БОТА в БД
     if config.DATABASE_URL:
         try:
-            bot_user = await bot.get_me()
-            await db.add_message(chat_id, bot_user.id, "Ячейка-тян", 'model', ai_reply)
+            await db.add_message(chat_id, bot_info.id, "Ячейка-тян", 'model', ai_reply)
         except Exception as e:
             logging.error(f"Ошибка БД (лог бота): {e}")
-        
-    # Удаляем сообщение "Смотрю..."
-    if status_msg:
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
 
 # --- Запуск ---
 
