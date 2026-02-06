@@ -141,9 +141,6 @@ async def main():
             print(f"❌ Ошибка БД: {e}")
             print("⚠️ Бот работает без памяти")
     
-    # Запуск веб-сервера (для HF Spaces)
-    await start_server()
-    
     # Запуск поллинга
     print("📡 Поллинг запущен...")
     await bot.delete_webhook(drop_pending_updates=True)
