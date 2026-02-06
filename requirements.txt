@@ -1,6 +1,7 @@
 aiogram
 aiohttp
 motor
+dnspython
 python-dotenv
 Pillow
 google-generativeai

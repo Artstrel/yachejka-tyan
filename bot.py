@@ -2,9 +2,9 @@ import asyncio
 import logging
 import sys
 import socket
-import random  # Обязательно нужен для рандома!
+import random
 
-# --- FIX IPv6/DNS (для Hugging Face и некоторых серверов) ---
+# --- FIX IPv6/DNS ---
 try:
     orig_getaddrinfo = socket.getaddrinfo
     def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
@@ -12,7 +12,7 @@ try:
     socket.getaddrinfo = getaddrinfo_ipv4
 except Exception:
     pass
-# -----------------------------------------------------------
+# --------------------
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
@@ -28,44 +28,46 @@ logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
 bot = None
 db = Database(config.DATABASE_URL)
+BOT_INFO = None  # Глобальная переменная для кэширования инфо о боте
 
-# Добавляем F.sticker в фильтр, чтобы бот видел стикеры
 @dp.message(F.text | F.photo | F.sticker)
 async def main_handler(message: types.Message):
-    global bot
+    global bot, BOT_INFO
     
-    # 1. Инициализация переменных (чтобы не было ошибок UnboundLocalError)
+    # Если вдруг BOT_INFO пустой, заполняем (страховка)
+    if BOT_INFO is None:
+        BOT_INFO = await bot.get_me()
+
     chat_id = message.chat.id
-    user_name = message.from_user.first_name
+    user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
-    # 2. "ВОРОВСТВО" СТИКЕРОВ
-    # Если пользователь прислал стикер, сохраняем его в базу
+    # --- ВОРОВСТВО СТИКЕРОВ ---
     if message.sticker and config.DATABASE_URL:
+        # Сохраняем стикер (асинхронно, не блокируя основной поток, если бы не await)
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
-        # Для истории сообщений помечаем, что был стикер
         if not text:
             emoji_part = f" {message.sticker.emoji}" if message.sticker.emoji else ""
             text = f"[Стикер{emoji_part}]"
 
-    # 3. Фильтр ответов (кому и когда отвечать)
-    bot_info = await bot.get_me()
-    is_mentioned = text and f"@{bot_info.username}" in text
-    is_reply_to_me = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
+    # --- ФИЛЬТРЫ ---
+    # Проверка на упоминание
+    is_mentioned = text and f"@{BOT_INFO.username}" in text
+    is_reply_to_me = message.reply_to_message and \
+                     message.reply_to_message.from_user.id == BOT_INFO.id
     
-    # Шанс ответа (снизил до 4% для общего чата, чтобы не душнил)
-    # Если это не личное обращение, бот молчит в 96% случаев
+    # Шанс 4% (для чата на 800 чел это норм)
     if not (is_mentioned or is_reply_to_me) and random.random() > 0.04:
         return
         
-    # Пустые сообщения (технические) пропускаем
+    # Пропуск пустых технических сообщений
     if not text and not message.photo and not message.sticker:
         return
 
-    # 4. Обработка контента
+    # --- ОБРАБОТКА ---
     image_data = None
     
-    # Индикатор "печатает..."
+    # Индикатор "печатает"
     try:
         await bot.send_chat_action(chat_id=chat_id, action="typing")
     except Exception:
@@ -75,8 +77,8 @@ async def main_handler(message: types.Message):
         try:
             photo = message.photo[-1]
             file = await bot.get_file(photo.file_id)
-            file_path = file.file_path
-            downloaded = await bot.download_file(file_path)
+            # Скачиваем в память
+            downloaded = await bot.download_file(file.file_path)
             
             import io
             from PIL import Image
@@ -85,17 +87,15 @@ async def main_handler(message: types.Message):
         except Exception as e:
             logging.error(f"Ошибка фото: {e}")
 
-    # 5. Сохраняем входящее сообщение в историю
+    # Сохраняем сообщение юзера
     if config.DATABASE_URL:
-        try:
-            await db.add_message(chat_id, message.from_user.id, user_name, 'user', text)
-        except Exception as e:
-            logging.error(f"Ошибка сохранения в БД: {e}")
+        # run_task позволяет не ждать завершения записи в БД, чтобы ответить быстрее
+        asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
 
-    # 6. Генерируем ответ через AI
+    # Генерация ответа
     ai_reply = await generate_response(db, chat_id, text, image_data)
 
-    # 7. Отправляем ответ
+    # Отправка ответа
     try:
         await message.reply(ai_reply)
     except Exception:
@@ -104,35 +104,34 @@ async def main_handler(message: types.Message):
         except Exception:
             pass
 
-    # 8. Сохраняем ответ бота
+    # Сохраняем ответ бота
     if config.DATABASE_URL:
-        try:
-            await db.add_message(chat_id, bot_info.id, "Bot", 'model', ai_reply)
-        except Exception:
-            pass
+        asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply))
             
-    # 9. БОНУС: Отправка случайного стикера из коллекции
-    # С шансом 15% бот может кинуть стикер после своего ответа
+    # --- ОТПРАВКА СТИКЕРА (БОНУС) ---
     if config.DATABASE_URL and random.random() < 0.15:
         sticker_id = await db.get_random_sticker()
         if sticker_id:
             try:
-                await asyncio.sleep(1) # Небольшая пауза для естественности
+                await asyncio.sleep(1) 
                 await bot.send_sticker(chat_id, sticker_id)
             except Exception as e:
                 logging.error(f"Не удалось отправить стикер: {e}")
 
-# --- Запуск ---
 async def main():
-    global bot
-    print("🚀 Запуск Ячейки-тян (Sticker Edition)...")
+    global bot, BOT_INFO
+    print("🚀 Запуск Ячейки-тян...")
     
     bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+    
+    # Кэшируем инфо о боте ОДИН раз при запуске
+    BOT_INFO = await bot.get_me()
+    print(f"🤖 Бот авторизован: @{BOT_INFO.username}")
     
     if config.DATABASE_URL:
         try:
             await db.connect()
-            print("✅ БД подключена. Режим накопления стикеров активен.")
+            print("✅ БД подключена.")
         except Exception as e:
             print(f"❌ Ошибка БД: {e}")
     
