@@ -15,11 +15,11 @@ safety_settings = {
 }
 
 model = genai.GenerativeModel(
-    model_name="gemini-3-flash-preview",
+    model_name="gemini-2.5-flash-preview",
     safety_settings=safety_settings,
     generation_config={
         "temperature": 1.1,
-        "max_output_tokens": 130,
+        "max_output_tokens": 250,
     }
 )
 
