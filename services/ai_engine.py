@@ -53,17 +53,19 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             response = await model.generate_content_async(context_str)
             
         if not response.candidates:
-            return "Я промолчу. Это было слишком тупо."
+            logging.error(f"Gemini пуст. Причина: {response.prompt_feedback}")
+            return None # Молчим, если ответ заблокирован или пуст
 
-        text_reply = response.text
+        # Проверяем причину завершения
         finish_reason = response.candidates[0].finish_reason
+        if finish_reason == 2: # 2 — это FINISH_REASON_MAX_TOKENS
+            logging.warning(f"⚠️ Токены закончились для чата {chat_id}. Бот уходит в режим молчания.")
+            return None # Просто возвращаем None вместо текста
 
-        # Если ответ все равно обрезался по лимиту (finish_reason == 2)
-        if finish_reason == 2:
-            logging.warning(f"⚠️ Ответ для {chat_id} был обрезан.")
-            # Добавляем многоточие или характерную фразу
-            if not text_reply.endswith(('.', '!', '?', ')')):
-                text_reply += "... короче, мне лень дописывать, ты и так поймешь."
+        return response.text
+    except Exception as e:
+        logging.error(f"❌ Gemini Error: {e}", exc_info=True)
+        return None # Молчим при критической ошибке
             
         return text_reply
 
