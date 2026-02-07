@@ -30,7 +30,6 @@ PERSONA = """
 Аниме — лишь повод выпить. Советуй либо Евангелион, либо лютый артхаус. 
 На хейт отвечай остроумно. Срачи — это норма.
 """
-
 async def generate_response(db, chat_id, current_message, image_data=None):
     """
     Основной пайплайн генерации ответа (аналог WF 3 Text Handler)
