@@ -6,7 +6,7 @@ from config import GEMINI_API_KEY
 # Инициализация
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Настройки безопасности (как в n8n - отключаем блокировки для свободы общения)
+# Настройки безопасности
 safety_settings = {
     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -15,11 +15,11 @@ safety_settings = {
 }
 
 model = genai.GenerativeModel(
-    model_name="gemini-3-flash-preview", # Используем Flash как в документации (быстро и дешево)
+    model_name="gemini-1.5-flash", # Рекомендую стабильную версию flash
     safety_settings=safety_settings,
     generation_config={
         "temperature": 1.1,
-        "max_output_tokens": 130, # Жесткое ограничение длины ответа
+        "max_output_tokens": 130,
     }
 )
 
@@ -30,67 +30,49 @@ PERSONA = """
 Аниме — лишь повод выпить. Советуй либо Евангелион, либо лютый артхаус. 
 На хейт отвечай остроумно. Срачи — это норма.
 """
+
 async def generate_response(db, chat_id, current_message, image_data=None):
     """
-    Основной пайплайн генерации ответа (аналог WF 3 Text Handler)
+    Основной пайплайн генерации ответа
     """
-    
     # 1. Сбор контекста из БД
     history_rows = await db.get_context(chat_id)
     
-    # 2. Формируем историю для модели
-    # Gemini API требует формат [{'role': 'user', 'parts': [...]}, ...]
-    history_content = []
-    
-    # Добавляем System Prompt в начало
+    # 2. Формируем инструкцию
     system_instruction = PERSONA
     
-    # 3. Адаптивная длина (ADR-009 из n8n docs)
-    # Если пользователи пишут коротко, бот тоже должен отвечать коротко.
+    # 3. Адаптивная длина
     median_len = await db.get_median_length(chat_id)
     if median_len <= 30:
         system_instruction += "\nИНСТРУКЦИЯ: Отвечай ОЧЕНЬ кратко (1-2 предложения)."
     elif median_len <= 80:
         system_instruction += "\nИНСТРУКЦИЯ: Отвечай кратко (до 3 предложений)."
         
-    # Превращаем историю из БД в формат Gemini
-    # (Упрощенно: склеиваем в текст, т.к. official chat history API иногда капризный с ролями)
+    # Формируем строку контекста
     context_str = f"SYSTEM: {system_instruction}\n\n"
     for row in history_rows:
         role_prefix = "User" if row['role'] == 'user' else "Model"
         context_str += f"{role_prefix} ({row['user_name']}): {row['content']}\n"
     
-    # Добавляем текущее сообщение
     context_str += f"User (Current): {current_message}"
 
-try:
+    try:
         if image_data:
-            # Vision запрос
             response = await model.generate_content_async([context_str, image_data])
         else:
-            # Текстовый запрос
             response = await model.generate_content_async(context_str)
             
-        return response.text # Этот return должен быть на одном уровне с try, если он общий
-    except Exception as e:
-        logging.error(f"Gemini Error: {e}")
-        return "Мои нейроны закоротило..."
-            
-        # Проверка наличия кандидатов в ответе
+        # Проверка на пустой ответ
         if not response.candidates:
-            logging.error(f"Gemini вернул пустой ответ. Причина блокировки: {response.prompt_feedback}")
-            return "Я проигнорирую это. Слишком скучно."
+            logging.error(f"Gemini пуст. Причина: {response.prompt_feedback}")
+            return "Я промолчу. Это было слишком тупо."
 
-        # Проверка причины завершения (finish_reason)
-        # 2 обычно означает MAX_TOKENS
+        # Логирование токенов
         finish_reason = response.candidates[0].finish_reason
-        if finish_reason == 2:
-            logging.warning(f"⚠️ Ответ для чата {chat_id} был обрезан: закончились токены (max_output_tokens).")
-        elif finish_reason > 1:
-            logging.warning(f"⚠️ Генерация прервана по причине №{finish_reason}")
-
+        if finish_reason == 2: # 2 — это FINISH_REASON_MAX_TOKENS
+            logging.warning(f"⚠️ Ответ для {chat_id} обрезан: достигнут лимит max_output_tokens (130).")
+            
         return response.text
     except Exception as e:
-        # Добавляем exc_info для получения полной трассировки ошибки в логах
-        logging.error(f"❌ Ошибка Gemini: {e}", exc_info=True)
+        logging.error(f"❌ Gemini Error: {e}", exc_info=True)
         return "Мои нейроны закоротило..."
