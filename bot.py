@@ -133,28 +133,21 @@ async def main_handler(message: types.Message):
 
 async def main():
     global bot, BOT_INFO
-    logging.info("🚀 Запуск процесса на Fly.io...")
+    print("🚀 Запуск Ячейки-тян...")
     
-    # Инициализация бота
     bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     
-    try:
-        BOT_INFO = await bot.get_me()
-        logging.info(f"✅ Бот авторизован: @{BOT_INFO.username}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка авторизации в Telegram: {e}")
-        return
-
+    # Кэшируем инфо о боте ОДИН раз при запуске
+    BOT_INFO = await bot.get_me()
+    print(f"🤖 Бот авторизован: @{BOT_INFO.username}")
+    
     if config.DATABASE_URL:
         try:
             await db.connect() #
-            logging.info("✅ MongoDB подключена успешно")
+            print("✅ БД подключена.")
         except Exception as e:
-            logging.error(f"❌ Критическая ошибка БД: {e}")
-
-    # Запуск Flask в отдельном потоке для Health Checks
-    start_server()
+            print(f"❌ Ошибка БД: {e}")
     
+    start_server() #
     await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("📡 Начинаю опрос (polling)...")
     await dp.start_polling(bot)
