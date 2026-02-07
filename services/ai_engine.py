@@ -65,9 +65,16 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
 try:
         if image_data:
+            # Vision запрос
             response = await model.generate_content_async([context_str, image_data])
         else:
+            # Текстовый запрос
             response = await model.generate_content_async(context_str)
+            
+        return response.text # Этот return должен быть на одном уровне с try, если он общий
+    except Exception as e:
+        logging.error(f"Gemini Error: {e}")
+        return "Мои нейроны закоротило..."
             
         # Проверка наличия кандидатов в ответе
         if not response.candidates:
