@@ -18,7 +18,7 @@ model = genai.GenerativeModel(
     safety_settings=safety_settings,
     generation_config={
         "temperature": 1.1,
-        "max_output_tokens": 400, # Увеличено, чтобы не обрезать русские слова
+        "max_output_tokens": 800, # Увеличено, чтобы не обрезать русские слова
     }
 )
 
