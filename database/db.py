@@ -45,7 +45,7 @@ class Database:
         }
         await self.db.messages.insert_one(document)
 
-    async def get_context(self, chat_id, limit=20):
+    async def get_context(self, chat_id, limit=8):
         """Получение истории чата"""
         cursor = self.db.messages.find({"chat_id": chat_id}).sort("created_at", -1).limit(limit)
         history = await cursor.to_list(length=limit)
