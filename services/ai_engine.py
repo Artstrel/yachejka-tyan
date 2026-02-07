@@ -64,15 +64,27 @@ async def generate_response(db, chat_id, current_message, image_data=None):
     # Добавляем текущее сообщение
     context_str += f"User (Current): {current_message}"
 
-    try:
+try:
         if image_data:
-            # Vision запрос
             response = await model.generate_content_async([context_str, image_data])
         else:
-            # Текстовый запрос
             response = await model.generate_content_async(context_str)
             
+        # Проверка наличия кандидатов в ответе
+        if not response.candidates:
+            logging.error(f"Gemini вернул пустой ответ. Причина блокировки: {response.prompt_feedback}")
+            return "Я проигнорирую это. Слишком скучно."
+
+        # Проверка причины завершения (finish_reason)
+        # 2 обычно означает MAX_TOKENS
+        finish_reason = response.candidates[0].finish_reason
+        if finish_reason == 2:
+            logging.warning(f"⚠️ Ответ для чата {chat_id} был обрезан: закончились токены (max_output_tokens).")
+        elif finish_reason > 1:
+            logging.warning(f"⚠️ Генерация прервана по причине №{finish_reason}")
+
         return response.text
     except Exception as e:
-        logging.error(f"Gemini Error: {e}")
+        # Добавляем exc_info для получения полной трассировки ошибки в логах
+        logging.error(f"❌ Ошибка Gemini: {e}", exc_info=True)
         return "Мои нейроны закоротило..."
