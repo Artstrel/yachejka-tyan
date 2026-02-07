@@ -31,7 +31,8 @@ PERSONA = """
 """
 
 async def generate_response(db, chat_id, current_message, image_data=None):
-    history_rows = await db.get_context(chat_id)
+    # Берем только последние 6-8 сообщений. Этого хватит для контекста разговора.
+    history_rows = await db.get_context(chat_id, limit=8)
     system_instruction = PERSONA
     
     # Адаптивная краткость (смягченная)
