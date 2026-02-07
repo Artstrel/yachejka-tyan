@@ -34,14 +34,27 @@ BOT_INFO = None  # Глобальная переменная для кэширо
 async def main_handler(message: types.Message):
     global bot, BOT_INFO
     
-    # Если вдруг BOT_INFO пустой, заполняем (страховка)
+    # Логируем каждое входящее сообщение для диагностики
+    user_name = message.from_user.first_name if message.from_user else "Anon"
+    logging.info(f"Получено сообщение от {user_name} (ID: {message.from_user.id})")
+
     if BOT_INFO is None:
         BOT_INFO = await bot.get_me()
 
     chat_id = message.chat.id
-    user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
+    # --- ПРОВЕРКА ФИЛЬТРОВ ---
+    is_mentioned = text and f"@{BOT_INFO.username}" in text
+    is_reply_to_me = message.reply_to_message and \
+                     message.reply_to_message.from_user.id == BOT_INFO.id
+    
+    # ВНИМАНИЕ: Для тестов можно временно снизить порог random.random()
+    if not (is_mentioned or is_reply_to_me) and random.random() > 0.04:
+        # Логируем пропуск сообщения по шансу
+        logging.info(f"Сообщение в чате {chat_id} пропущено (шанс 4%)")
+        return
+        
     # --- ВОРОВСТВО СТИКЕРОВ ---
     if message.sticker and config.DATABASE_URL:
         # Сохраняем стикер (асинхронно, не блокируя основной поток, если бы не await)
