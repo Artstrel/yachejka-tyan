@@ -133,27 +133,28 @@ async def main_handler(message: types.Message):
 
 async def main():
     global bot, BOT_INFO
-    print("🚀 Запуск Ячейки-тян...")
+    logging.info("🚀 Запуск процесса на Fly.io...")
     
+    # Инициализация бота
     bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     
-    # Кэшируем инфо о боте ОДИН раз при запуске
-    BOT_INFO = await bot.get_me()
-    print(f"🤖 Бот авторизован: @{BOT_INFO.username}")
-    
+    try:
+        BOT_INFO = await bot.get_me()
+        logging.info(f"✅ Бот авторизован: @{BOT_INFO.username}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка авторизации в Telegram: {e}")
+        return
+
     if config.DATABASE_URL:
         try:
-            await db.connect()
-            print("✅ БД подключена.")
+            await db.connect() #
+            logging.info("✅ MongoDB подключена успешно")
         except Exception as e:
-            print(f"❌ Ошибка БД: {e}")
-    
-    await start_server()
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+            logging.error(f"❌ Критическая ошибка БД: {e}")
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот остановлен")
+    # Запуск Flask в отдельном потоке для Health Checks
+    start_server()
+    
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("📡 Начинаю опрос (polling)...")
+    await dp.start_polling(bot)
