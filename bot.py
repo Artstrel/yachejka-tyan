@@ -119,11 +119,13 @@ async def main_handler(message: types.Message):
     # Сохранение (asyncio.create_task для скорости)
     if config.DATABASE_URL:
         asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
+ai_reply = await generate_response(db, chat_id, text, image_data)
 
-    # Генерация
-    ai_reply = await generate_response(db, chat_id, text, image_data)
+    # ПРОВЕРКА: Если ответа нет (закончились токены или ошибка), просто выходим
+    if ai_reply is None:
+        return
 
-    # Ответ
+    # Отправка ответа (произойдет только если токены НЕ закончились)
     try:
         await message.reply(ai_reply)
         if config.DATABASE_URL:
