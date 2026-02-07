@@ -1,23 +1,30 @@
-# fly.toml app configuration file generated for yachejka-tyan on 2026-02-07T07:17:53Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'yachejka-tyan'
-primary_region = 'fra'
+app = "yachejka-bot" # Убедись, что имя совпадает с твоим приложением
+primary_region = "ams"
 
 [build]
+  dockerfile = "Dockerfile"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = false # <--- ЗАПРЕЩАЕМ УСЫПЛЯТЬ БОТА
   auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+  min_machines_running = 1
+  processes = ["app"]
+
+# Настройка проверки здоровья.
+# Fly будет пинговать твой Flask-сервер каждые 10 секунд.
+# Если бот зависнет, Fly это увидит и перезагрузит его.
+[[services.http_checks]]
+  interval = "10s"
+  timeout = "2s"
+  grace_period = "5s"
+  restart_limit = 0
+  method = "get"
+  path = "/"
+  protocol = "http"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
+  memory = "512mb"
+  cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
