@@ -18,7 +18,7 @@ model = genai.GenerativeModel(
     safety_settings=safety_settings,
     generation_config={
         "temperature": 1.1,
-        "max_output_tokens": 800, # Увеличено, чтобы не обрезать русские слова
+        "max_output_tokens": 400, # Увеличено, чтобы не обрезать русские слова
     }
 )
 
@@ -39,12 +39,16 @@ async def generate_response(db, chat_id, current_message, image_data=None):
     if median_len <= 40:
         system_instruction += "\nИНСТРУКЦИЯ: Пиши максимально лаконично, одной фразой."
 
-    context_str = f"SYSTEM: {system_instruction}\n\n"
-    for row in history_rows:
-        role_prefix = "User" if row['role'] == 'user' else "Model"
-        context_str += f"{role_prefix} ({row['user_name']}): {row['content']}\n"
+# Убираем слово SYSTEM, модель поймет инструкцию и так.
+    # Убираем скобки и role_prefix, если они не критичны для сценария.
+    context_str = f"{system_instruction}\n\n" 
     
-    context_str += f"User (Current): {current_message}"
+    for row in history_rows:
+        # Формат "Имя: текст" самый экономный и понятный для модели
+        context_str += f"{row['user_name']}: {row['content']}\n"
+    
+    # Добавляем разделитель для четкости, но экономим слова
+    context_str += f"\nUser: {current_message}\nBot:"
 
     try:
         if image_data:
