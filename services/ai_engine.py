@@ -15,7 +15,7 @@ safety_settings = {
 }
 
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", # Рекомендую стабильную версию flash
+    model_name="gemini-3-flash-preview",
     safety_settings=safety_settings,
     generation_config={
         "temperature": 1.1,
