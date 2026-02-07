@@ -15,7 +15,7 @@ COPY . .
 RUN chmod -R 777 /app
 
 # Открываем порт 7860 (стандарт HF Spaces)
-EXPOSE 7860
+EXPOSE 8080
 
 # Запускаем бота
 CMD ["python", "bot.py"]
