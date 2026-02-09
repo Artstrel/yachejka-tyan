@@ -2,14 +2,14 @@ import logging
 from openai import AsyncOpenAI
 from config import OPENROUTER_API_KEY
 
-# Инициализация клиента OpenRouter
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
 
-# Используем бесплатную версию Llama 3.3 70B Instruct
-MODEL_NAME = "meta-llama/llama-3.3-70b-instruct:free"
+# Используем новейший Qwen 3 Next 80B (Free версия)
+# ID взят из OpenRouter. A3B = Active 3B params (очень быстрая MoE)
+MODEL_NAME = "qwen/qwen3-next-80b-a3b-instruct:free"
 
 PERSONA = """
 Ты — циничный олд-экспат в Тбилиси. Ответы: 1-2 предложения, строго без вежливости и вступлений. 
@@ -20,10 +20,10 @@ PERSONA = """
 """
 
 async def generate_response(db, chat_id, current_message, image_data=None):
-    # Получаем контекст диалога
+    # Получаем контекст
     history_rows = await db.get_context(chat_id)
     
-    # Настройка персоны
+    # Qwen отлично следует системным инструкциям
     system_instruction = PERSONA
     
     # Адаптивная краткость
@@ -33,19 +33,17 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
     messages = [{"role": "system", "content": system_instruction}]
 
-    # Добавляем историю из БД
+    # История
     for row in history_rows:
-        # Маппинг ролей: model -> assistant, user -> user
         role = "assistant" if row['role'] == "model" else "user"
         messages.append({"role": role, "content": row['content']})
 
     # Текущее сообщение
     final_text = current_message
     
-    # Llama 3.3 70B — текстовая модель. 
-    # Если пользователь прислал фото, сообщаем об этом модели текстом.
+    # Эта версия Qwen — текстовая.
     if image_data:
-        final_text += " [Пользователь прикрепил изображение, но я его не вижу, так как я текстовая версия]"
+        final_text += " [Пользователь прикрепил изображение, но я его не вижу. Отшутись на эту тему.]"
 
     messages.append({"role": "user", "content": final_text})
 
@@ -53,8 +51,8 @@ async def generate_response(db, chat_id, current_message, image_data=None):
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.7, # 0.7 отлично подходит для Llama 3 для креативных ответов
-            max_tokens=500,
+            temperature=0.7, # 0.7 - золотой стандарт для Qwen Instruct
+            max_tokens=600,
             extra_headers={
                 "HTTP-Referer": "https://telegram.org",
                 "X-Title": "Yachejka Bot"
@@ -64,10 +62,8 @@ async def generate_response(db, chat_id, current_message, image_data=None):
         if not response.choices:
             return None
 
-        text = response.choices[0].message.content
-        return text
+        return response.choices[0].message.content
 
     except Exception as e:
         logging.error(f"❌ OpenRouter Error: {e}")
-        # Защита от перегрузки бесплатных эндпоинтов OpenRouter
         return None
