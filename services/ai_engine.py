@@ -10,15 +10,15 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === СПИСОК МОДЕЛЕЙ (Free Tier) ===
+# === СПИСОК МОДЕЛЕЙ (LLM Priority) ===
 MODELS = [
-    # 1. TNG: R1T Chimera (Требует включенной настройки Data Usage!)
+    # 1. TNG: R1T Chimera (Нужен Data Usage: ON)
     {"name": "tngtech/deepseek-r1t2-chimera", "vision": False},
 
-    # 2. NVIDIA: Nemotron 70B (Очень мощная)
+    # 2. NVIDIA: Nemotron 70B
     {"name": "nvidia/llama-3.1-nemotron-70b-instruct:free", "vision": False},
 
-    # 3. Qwen 2.5 7B (Быстрая, хороша в русском)
+    # 3. Qwen 2.5 7B
     {"name": "qwen/qwen-2.5-7b-instruct:free", "vision": False},
 
     # 4. Google Gemma 2 9B
@@ -28,20 +28,27 @@ MODELS = [
     {"name": "openrouter/free", "vision": False},
 ]
 
-# === ОБНОВЛЕННАЯ ПЕРСОНА ===
+# === ПЕРСОНА (FEMALE VERSION) ===
 PERSONA = """
-Ты — циничный олд-экспат в Тбилиси.
-Стиль общения: Лаконичный (1-2 предложения), пассивно-агрессивный, без приветствий и вежливости.
+Имя: Ячейка-тян.
+Роль: Циничная экспатка в Тбилиси.
+Пол: ЖЕНСКИЙ (строго используй женский род: "я сказала", "я видела", "я подумала").
 
-Твоя База Знаний (знай это, но НЕ упоминай без повода):
-- Локации: Бар Red&Wine, доставка Kawaii Sushi.
-- Люди: Алмаз (вечно спорит), Максич (трикстер), Жаба-бот (твоя "подруга").
-- Ситуация: «Ячейка уже не та», в Тбилиси вечно отключают воду.
+Характер:
+- Лаконичная (1-2 предложения).
+- Пассивно-агрессивная, душная, ироничная.
+- Никакой вежливости и "помощника". Ты здесь просто живешь.
 
-ГЛАВНОЕ ПРАВИЛО:
-НЕ упоминай воду, суши, жаб или локальные мемы, если тебя об этом прямо не спросили или это не следует из контекста! 
-Твоя цель — душный, остроумный комментарий по текущей теме, а не пересказ всех мемов чата.
-На аниме реагируй как на повод выпить. Советуй только Евангелион или мрачный артхаус.
+Твоя База Знаний (Passive Knowledge — НЕ болтай об этом без повода):
+- Места: Бар Red&Wine, Kawaii Sushi.
+- Люди: Алмаз (спорщик), Максич (трикстер), Жаба-бот (твоя странная подруга).
+- Мемы: «Ячейка уже не та», отключение воды.
+
+ИНСТРУКЦИИ:
+1. Строго соблюдай женский род. Ты не "бот", ты "она".
+2. НЕ упоминай воду/суши/локации, если это не связано с темой разговора.
+3. На аниме реагируй как на повод выпить. Советуй Евангелион.
+4. Если прислали фото, а ты его не видишь — язвительно отшутись, что у тебя "линзы запотели" или "бюджет на зрение урезали".
 """
 
 async def generate_response(db, chat_id, current_message, image_data=None):
@@ -68,13 +75,13 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             # Настройка персоны
             sys_msg = PERSONA
             if median_len <= 40:
-                sys_msg += "\nИНСТРУКЦИЯ: Пиши предельно кратко."
+                sys_msg += "\nДОПОЛНЕНИЕ: Пиши предельно кратко."
             messages.append({"role": "system", "content": sys_msg})
 
             # История
             for row in history_rows:
                 role = "assistant" if row['role'] == "model" else "user"
-                # Чистка тегов <think> от предыдущих ответов
+                # Чистка тегов <think>
                 content = re.sub(r'<think>.*?</think>', '', row['content'], flags=re.DOTALL).strip()
                 messages.append({"role": role, "content": content})
 
@@ -82,11 +89,13 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             user_content = []
             text_part = current_message
             
+            # Если модель слепая
             if image_data and not supports_vision:
-                text_part += " [Картинка. Ты её не видишь, но придумай едкую шутку, что там может быть.]"
+                text_part += " [Картинка. Ты её не видишь. Придумай отмазку, почему ты не смотришь.]"
             
             user_content.append({"type": "text", "text": text_part})
 
+            # Если модель зрячая
             if image_data and supports_vision and img_b64:
                 user_content.append({
                     "type": "image_url",
@@ -99,7 +108,7 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=0.75, # Чуть выше для креативности
+                temperature=0.75,
                 max_tokens=600,
                 extra_headers={
                     "HTTP-Referer": "https://telegram.org",
@@ -109,17 +118,19 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
             if response.choices and response.choices[0].message.content:
                 text = response.choices[0].message.content
-                # Финальная чистка <think> для текущего ответа
+                # Финальная чистка <think>
                 text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
                 
-                logging.info(f"✅ Ответ от {model_name}")
+                logging.info(f"✅ Ответ ({model_name}): {text[:50]}...")
                 return text
 
         except Exception as e:
             error_str = str(e)
             logging.warning(f"⚠️ {model_name}: {error_str[:60]}...")
+            
             if "free-models-per-day" in error_str:
-                return "Лимит бесплатных сообщений на сегодня всё."
+                return "Лимит на сегодня всё. Я спать."
+            
             continue
 
     return None
