@@ -2,7 +2,7 @@ import motor.motor_asyncio
 from datetime import datetime, timedelta
 import logging
 import re
-import config # Импортируем конфиг, чтобы видеть ID ветки
+import config
 
 class Database:
     def __init__(self, uri, db_name="yachejka_bot"):
@@ -18,11 +18,10 @@ class Database:
         except Exception as e:
             logging.error(f"❌ MongoDB Error: {e}")
 
-    # ОБНОВЛЕНО: Добавлен thread_id=None
     async def add_message(self, chat_id, user_id, user_name, role, content, thread_id=None):
         await self.messages.insert_one({
             "chat_id": chat_id,
-            "message_thread_id": thread_id, # Сохраняем ID ветки
+            "message_thread_id": thread_id,
             "user_id": user_id,
             "user_name": user_name,
             "role": role,
@@ -31,7 +30,6 @@ class Database:
         })
 
     async def get_context(self, chat_id, limit=10):
-        # Обычный контекст (берем из всех веток или только текущей - тут лучше из всех для контекста)
         cursor = self.messages.find({"chat_id": chat_id}).sort("timestamp", -1).limit(limit)
         history = await cursor.to_list(length=limit)
         return history[::-1]
@@ -43,36 +41,48 @@ class Database:
         lengths = [len(m['content']) for m in messages]
         return sum(lengths) / len(lengths)
 
-    # --- УМНЫЙ ПОИСК АНОНСОВ ---
-  async def get_potential_announcements(self, chat_id, days=14, limit=3):
+    # --- УМНЫЙ ПОИСК (ОБНОВЛЕННЫЙ) ---
+    async def get_potential_announcements(self, chat_id, days=14, limit=5):
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         
         query = {
             "chat_id": chat_id,
             "role": "user",
             "timestamp": {"$gte": cutoff_date},
-            "$expr": {"$gt": [{"$strLenCP": "$content"}, 50]} 
+            "$expr": {"$gt": [{"$strLenCP": "$content"}, 40]} # Чуть снизил порог длины
         }
 
+        # 1. Если знаем ID ветки - ищем там
         if config.ANNOUNCEMENT_THREAD_ID and config.ANNOUNCEMENT_THREAD_ID != 0:
             query["message_thread_id"] = config.ANNOUNCEMENT_THREAD_ID
-            logging.info(f"🔎 Ищу анонсы строго в ветке ID: {config.ANNOUNCEMENT_THREAD_ID}")
+            logging.info(f"🔎 Ищу анонсы в ветке ID: {config.ANNOUNCEMENT_THREAD_ID}")
         else:
+            # 2. Если не знаем ID - ищем по твоим паттернам
             logging.info("🔎 Ищу анонсы по расширенным ключевым словам")
-            # === ОБНОВЛЕННЫЕ КЛЮЧЕВЫЕ СЛОВА ПОД ВАШ ФОРМАТ ===
+            
             keywords = [
-                "📅", "🗓", "📍", "🪧", "🚸", "🕗",  # Эмодзи из примера
-                "начало", "вход", "цена", "место -", "собираемся", "адрес", # Слова из примера
-                "start:", "price:", "location"
+                # Эмодзи из твоих примеров
+                "📅", "🗓", "📍", "🪧", "🚸", "🕗", "🕓", "📕", "🎩", "🎟", "💵", "‼️", "👉", "🍳",
+                # Слова-маркеры
+                "начало", "вход", "цена", "место -", "место:", "собираемся", 
+                "d22", "bar", "red&wine", "coffee lars", # Локации
+                "everyweek", "перенос", "powerpoint", "проектор", "книжный клуб",
+                "суббота -", "пятница -", # Формат заголовков
             ]
-            regex_kw = "|".join([re.escape(k) for k in keywords])
+            
+            # Экранируем спецсимволы, но добавляем "|" вручную, так как это regex спецсимвол
+            escaped_keywords = [re.escape(k) for k in keywords]
+            # Добавляем поиск по вертикальной черте (как в примере с Проектором: "19:00 | D22")
+            escaped_keywords.append(r"\|") 
+            
+            regex_kw = "|".join(escaped_keywords)
             query["content"] = {"$regex": regex_kw, "$options": "i"}
 
         cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
         events = await cursor.to_list(length=limit)
         return events
 
-    # ... (методы стикеров без изменений)
+    # ... Stickers methods ...
     async def add_sticker(self, file_id, emoji):
         exists = await self.stickers.find_one({"file_id": file_id})
         if not exists:
