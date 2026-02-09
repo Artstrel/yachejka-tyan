@@ -12,7 +12,7 @@ client = AsyncOpenAI(
 )
 
 # Slug модели на OpenRouter
-MODEL_NAME = "deepseek/deepseek-r1-0528"
+MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free"
 
 PERSONA = """
 Ты — циничный олд-экспат в Тбилиси. Ответы: Максимально быстро. 1-2 предложения, строго без вежливости и вступлений. 
