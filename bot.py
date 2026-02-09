@@ -96,7 +96,7 @@ async def main_handler(message: types.Message):
     is_reply_to_me = message.reply_to_message and \
                      message.reply_to_message.from_user.id == BOT_INFO.id
     
-    if not (is_mentioned or is_reply_to_me) and random.random() > 0.04:
+    if not (is_mentioned or is_reply_to_me) and random.random() > 0.25:
         return
 
     # Typing...
