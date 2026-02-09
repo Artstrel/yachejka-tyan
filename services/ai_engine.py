@@ -8,9 +8,8 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# Используем бесплатную версию GPT-OSS-120B
-# Это мощная MoE модель (117B параметров), сравнимая с GPT-4o-mini/GPT-4
-MODEL_NAME = "openai/gpt-oss-120b:free"
+# Используем бесплатную версию Llama 3.3 70B Instruct
+MODEL_NAME = "meta-llama/llama-3.3-70b-instruct:free"
 
 PERSONA = """
 Ты — циничный олд-экспат в Тбилиси. Ответы: 1-2 предложения, строго без вежливости и вступлений. 
@@ -24,10 +23,8 @@ async def generate_response(db, chat_id, current_message, image_data=None):
     # Получаем контекст диалога
     history_rows = await db.get_context(chat_id)
     
-    # Настройка персоны. 
-    # Reasoning Effort: Low — заставляет модель отвечать быстро, без лишних "раздумий", 
-    # что идеально для чат-бота.
-    system_instruction = PERSONA + "\nReasoning Effort: Low"
+    # Настройка персоны
+    system_instruction = PERSONA
     
     # Адаптивная краткость
     median_len = await db.get_median_length(chat_id)
@@ -38,15 +35,15 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
     # Добавляем историю из БД
     for row in history_rows:
-        # Маппинг ролей
+        # Маппинг ролей: model -> assistant, user -> user
         role = "assistant" if row['role'] == "model" else "user"
         messages.append({"role": role, "content": row['content']})
 
     # Текущее сообщение
     final_text = current_message
     
-    # GPT-OSS-120B — текстовая модель (в бесплатной версии).
-    # Вместо картинки отправляем описание.
+    # Llama 3.3 70B — текстовая модель. 
+    # Если пользователь прислал фото, сообщаем об этом модели текстом.
     if image_data:
         final_text += " [Пользователь прикрепил изображение, но я его не вижу, так как я текстовая версия]"
 
@@ -56,7 +53,7 @@ async def generate_response(db, chat_id, current_message, image_data=None):
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.7, # 0.7 — хороший баланс для этой модели
+            temperature=0.7, # 0.7 отлично подходит для Llama 3 для креативных ответов
             max_tokens=500,
             extra_headers={
                 "HTTP-Referer": "https://telegram.org",
@@ -72,6 +69,5 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
     except Exception as e:
         logging.error(f"❌ OpenRouter Error: {e}")
-        # Если бесплатная модель перегружена (частая проблема free-tier),
-        # можно вернуть None, чтобы бот просто промолчал, или заглушку.
+        # Защита от перегрузки бесплатных эндпоинтов OpenRouter
         return None
