@@ -58,17 +58,13 @@ async def on_startup(dispatcher: Dispatcher):
     BOT_INFO = await bot.get_me()
     logging.info(f"🤖 Авторизован как @{BOT_INFO.username}")
 
-    # 3. Запуск Health Check сервера (в отдельном потоке)
+    # 3. Запуск Health Check сервера
     start_server()
 
 async def on_shutdown(dispatcher: Dispatcher):
-    """Срабатывает при остановке (деплой, перезагрузка)"""
     logging.warning("🛑 Получен сигнал остановки. Завершаю работу...")
-    
-    # Закрываем БД (если у клиента есть метод close, иначе просто логируем)
     logging.info("💤 Соединения закрыты. Bye-bye.")
 
-# Регистрируем хуки
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
@@ -86,7 +82,7 @@ async def main_handler(message: types.Message):
     # Лог для отладки
     logging.info(f"📩 Message from {user_name}: {text[:30]}...")
 
-    # Стикеры
+    # 1. СТИКЕРЫ: Сохраняем (воруем) стикеры от пользователей
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
@@ -96,7 +92,7 @@ async def main_handler(message: types.Message):
     is_reply_to_me = message.reply_to_message and \
                      message.reply_to_message.from_user.id == BOT_INFO.id
     
-    if not (is_mentioned or is_reply_to_me) and random.random() > 0.4:
+    if not (is_mentioned or is_reply_to_me) and random.random() > 0.25:
         return
 
     # Typing...
@@ -116,38 +112,28 @@ async def main_handler(message: types.Message):
             if not text: text = "[Photo]"
         except Exception: pass
 
-    # Сохранение (asyncio.create_task для скорости)
-# Сохранение (asyncio.create_task для скорости)
+    # Сохранение сообщения пользователя
     if config.DATABASE_URL:
         asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
 
-    # --- ИСПРАВЛЕНИЕ: Добавлен отступ для этого блока ---
+    # Генерация ответа
     ai_reply = await generate_response(db, chat_id, text, image_data)
 
-    # ПРОВЕРКА: Если ответа нет (закончились токены или ошибка), просто выходим
     if ai_reply is None:
         return
 
-    # Отправка ответа (произойдет только если токены НЕ закончились)
+    # Отправка ответа
     try:
         await message.reply(ai_reply)
+        
+        # Сохраняем ответ бота
         if config.DATABASE_URL:
             asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply))
-    except Exception as e:
-        logging.error(f"❌ Ошибка отправки: {e}")
 
-# --- ТОЧКА ВХОДА ---
-
-async def main():
-    # Удаляем вебхук и все накопившиеся апдейты, чтобы не отвечать на старье
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    logging.info("📡 Запуск Polling...")
-    # allowed_updates оптимизирует трафик, получая только нужное
-    await dp.start_polling(bot, allowed_updates=["message"])
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Бот выключен вручную")
+        # 2. ОТПРАВКА СТИКЕРА: 20% шанс отправить случайный стикер после ответа
+        if config.DATABASE_URL and random.random() < 0.2:
+            sticker_id = await db.get_random_sticker()
+            if sticker_id:
+                try:
+                    # Небольшая задержка перед стикером для естественности
+                    await asyncio.sleep(
