@@ -2,6 +2,7 @@ import motor.motor_asyncio
 from datetime import datetime, timedelta
 import logging
 import re
+import config # Импортируем конфиг, чтобы видеть ID ветки
 
 class Database:
     def __init__(self, uri, db_name="yachejka_bot"):
@@ -17,9 +18,11 @@ class Database:
         except Exception as e:
             logging.error(f"❌ MongoDB Error: {e}")
 
-    async def add_message(self, chat_id, user_id, user_name, role, content):
+    # ОБНОВЛЕНО: Добавлен thread_id=None
+    async def add_message(self, chat_id, user_id, user_name, role, content, thread_id=None):
         await self.messages.insert_one({
             "chat_id": chat_id,
+            "message_thread_id": thread_id, # Сохраняем ID ветки
             "user_id": user_id,
             "user_name": user_name,
             "role": role,
@@ -28,6 +31,7 @@ class Database:
         })
 
     async def get_context(self, chat_id, limit=10):
+        # Обычный контекст (берем из всех веток или только текущей - тут лучше из всех для контекста)
         cursor = self.messages.find({"chat_id": chat_id}).sort("timestamp", -1).limit(limit)
         history = await cursor.to_list(length=limit)
         return history[::-1]
@@ -39,34 +43,40 @@ class Database:
         lengths = [len(m['content']) for m in messages]
         return sum(lengths) / len(lengths)
 
-    # --- ИСПРАВЛЕННЫЙ ПОИСК АНОНСОВ ---
-    async def get_potential_announcements(self, chat_id, days=5, limit=5):
+    # --- УМНЫЙ ПОИСК АНОНСОВ ---
+    async def get_potential_announcements(self, chat_id, days=14, limit=3):
         """
-        Ищет сообщения с ссылками или ключевыми словами событий.
+        Ищет анонсы.
+        Если задан config.ANNOUNCEMENT_THREAD_ID - ищет строго там.
+        Если нет - ищет по структуре (эмодзи, дата, время).
         """
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         
-        # Ключевые слова (регистронезависимые)
-        keywords = ["вход", "цена", "начало", "сбор", "регистрация", "📍", "📅", "анонс", "состоится"]
-        regex_kw = "|".join([re.escape(k) for k in keywords])
-
-        cursor = self.messages.find({
+        query = {
             "chat_id": chat_id,
             "role": "user",
             "timestamp": {"$gte": cutoff_date},
-            # Условие: (Есть ссылка) ИЛИ (Есть ключевое слово И длина > 30 символов)
-            "$or": [
-                {"content": {"$regex": "http", "$options": "i"}}, 
-                {"$and": [
-                    {"content": {"$regex": regex_kw, "$options": "i"}},
-                    {"$expr": {"$gt": [{"$strLenCP": "$content"}, 30]}}
-                ]}
-            ]
-        }).sort("timestamp", -1).limit(limit)
+            # Отсекаем короткие сообщения (менее 50 символов), анонсы обычно длинные
+            "$expr": {"$gt": [{"$strLenCP": "$content"}, 50]} 
+        }
 
+        # 1. Если мы знаем ID ветки анонсов - ищем СТРОГО там
+        if config.ANNOUNCEMENT_THREAD_ID and config.ANNOUNCEMENT_THREAD_ID != 0:
+            query["message_thread_id"] = config.ANNOUNCEMENT_THREAD_ID
+            logging.info(f"🔎 Ищу анонсы строго в ветке ID: {config.ANNOUNCEMENT_THREAD_ID}")
+        else:
+            # 2. Если ID не знаем - ищем по признакам (Эмодзи календаря/времени/места)
+            # Анонсы почти всегда содержат: 📅, 🗓, 📍, 🕗, "Начало:", "Вход:"
+            logging.info("🔎 Ищу анонсы по ключевым словам (ветка не задана)")
+            keywords = ["📅", "🗓", "📍", "🕗", "начало:", "вход:", "start:", "price:"]
+            regex_kw = "|".join([re.escape(k) for k in keywords])
+            query["content"] = {"$regex": regex_kw, "$options": "i"}
+
+        cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
         events = await cursor.to_list(length=limit)
         return events
 
+    # ... (методы стикеров без изменений)
     async def add_sticker(self, file_id, emoji):
         exists = await self.stickers.find_one({"file_id": file_id})
         if not exists:
