@@ -88,7 +88,7 @@ async def main_handler(message: types.Message):
     
     # Шанс ответа увеличил до 50% для тестов (было 0.25)
     # Если хочешь реже — верни 0.25 или 0.1
-    chance = 0.25 
+    chance = 0.15 
     if not (is_mentioned or is_reply_to_me) and random.random() > chance:
         return
 
