@@ -23,14 +23,14 @@ from database.db import Database
 from services.ai_engine import generate_response
 from keep_alive import start_server
 
-# Логирование в stdout
+# Логирование
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     stream=sys.stdout
 )
 
-# Инициализация объектов
+# Инициализация
 dp = Dispatcher()
 db = Database(config.DATABASE_URL)
 bot = Bot(
@@ -39,13 +39,10 @@ bot = Bot(
 )
 BOT_INFO = None
 
-# --- СОБЫТИЯ ЖИЗНЕННОГО ЦИКЛА (Startup/Shutdown) ---
+# --- Startup/Shutdown ---
 
 async def on_startup(dispatcher: Dispatcher):
-    """Срабатывает при запуске бота"""
     logging.info("🚀 Запуск процессов...")
-    
-    # 1. Подключение к БД
     if config.DATABASE_URL:
         try:
             await db.connect()
@@ -53,17 +50,13 @@ async def on_startup(dispatcher: Dispatcher):
         except Exception as e:
             logging.error(f"❌ Ошибка подключения к БД: {e}")
 
-    # 2. Получение инфо о боте
     global BOT_INFO
     BOT_INFO = await bot.get_me()
     logging.info(f"🤖 Авторизован как @{BOT_INFO.username}")
-
-    # 3. Запуск Health Check сервера
     start_server()
 
 async def on_shutdown(dispatcher: Dispatcher):
-    logging.warning("🛑 Получен сигнал остановки. Завершаю работу...")
-    logging.info("💤 Соединения закрыты. Bye-bye.")
+    logging.warning("🛑 Bot stopping...")
 
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
@@ -72,17 +65,18 @@ dp.shutdown.register(on_shutdown)
 
 @dp.message(F.text | F.photo | F.sticker)
 async def main_handler(message: types.Message):
-    # Если бот еще не прогрузился
     if not BOT_INFO: return
 
     chat_id = message.chat.id
+    # Получаем ID ветки (топика), если сообщение пришло оттуда
+    thread_id = message.message_thread_id 
+    
     user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
-    # Лог для отладки
-    logging.info(f"📩 Message from {user_name}: {text[:30]}...")
+    logging.info(f"📩 Message from {user_name} (Topic: {thread_id}): {text[:30]}...")
 
-    # 1. СТИКЕРЫ: Сохраняем (воруем) стикеры от пользователей
+    # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
@@ -92,10 +86,12 @@ async def main_handler(message: types.Message):
     is_reply_to_me = message.reply_to_message and \
                      message.reply_to_message.from_user.id == BOT_INFO.id
     
-    if not (is_mentioned or is_reply_to_me) and random.random() > 0.25:
+    # Шанс ответа увеличил до 50% для тестов (было 0.25)
+    # Если хочешь реже — верни 0.25 или 0.1
+    chance = 0.25 
+    if not (is_mentioned or is_reply_to_me) and random.random() > chance:
         return
 
-    # Typing...
     try: await bot.send_chat_action(chat_id=chat_id, action="typing")
     except: pass
 
@@ -112,39 +108,43 @@ async def main_handler(message: types.Message):
             if not text: text = "[Photo]"
         except Exception: pass
 
-    # Сохранение сообщения пользователя
     if config.DATABASE_URL:
         asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
 
-    # Генерация ответа
+    # Генерация
     ai_reply = await generate_response(db, chat_id, text, image_data)
 
     if ai_reply is None:
         return
 
-    # Отправка ответа
+    # Отправка
     try:
+        # message.reply сам знает, в какую ветку отвечать
         await message.reply(ai_reply)
         
-        # Сохраняем ответ бота
         if config.DATABASE_URL:
             asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply))
 
-        # 2. ОТПРАВКА СТИКЕРА: 20% шанс отправить случайный стикер после ответа
-        if config.DATABASE_URL and random.random() < 0.2:
+        # 2. ОТПРАВКА СТИКЕРА (ИСПРАВЛЕНО)
+        # 30% шанс стикера
+        if config.DATABASE_URL and random.random() < 0.3:
             sticker_id = await db.get_random_sticker()
             if sticker_id:
                 try:
-                    # Небольшая задержка перед стикером для естественности
                     await asyncio.sleep(1)
-                    await bot.send_sticker(chat_id, sticker_id)
+                    # ВАЖНО: Передаем message_thread_id, чтобы стикер ушел в нужную ветку
+                    await bot.send_sticker(
+                        chat_id=chat_id, 
+                        sticker=sticker_id,
+                        message_thread_id=thread_id
+                    )
                 except Exception as e:
                     logging.error(f"❌ Не удалось отправить стикер: {e}")
 
     except Exception as e:
         logging.error(f"❌ Ошибка отправки: {e}")
 
-# --- ТОЧКА ВХОДА ---
+# --- MAIN ---
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
