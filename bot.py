@@ -136,7 +136,7 @@ async def main_handler(message: types.Message):
             if sticker_id:
                 try:
                     # Небольшая задержка перед стикером для естественности
-                    await asyncio.sleep(1) 
+                    await asyncio.sleep(1)
                     await bot.send_sticker(chat_id, sticker_id)
                 except Exception as e:
                     logging.error(f"❌ Не удалось отправить стикер: {e}")
