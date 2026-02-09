@@ -10,37 +10,38 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === СПИСОК МОДЕЛЕЙ ===
-# Приоритет: LLM -> Легкие модели -> Fallback
+# === СПИСОК МОДЕЛЕЙ (Free Tier) ===
 MODELS = [
-    # 1. TNG: R1T Chimera (Как ты просил - в топе)
-    # ВНИМАНИЕ: Требует включенной галочки Data Usage в настройках OpenRouter!
+    # 1. TNG: R1T Chimera (Требует включенной настройки Data Usage!)
     {"name": "tngtech/deepseek-r1t2-chimera", "vision": False},
 
-    # 2. NVIDIA: Nemotron (Llama-3.1-Nemotron-70B)
-    # Мощная модель от NVIDIA, часто доступна бесплатно.
+    # 2. NVIDIA: Nemotron 70B (Очень мощная)
     {"name": "nvidia/llama-3.1-nemotron-70b-instruct:free", "vision": False},
 
-    # 3. Qwen: Qwen 2.5 7B Instruct
-    # (Qwen 3 пока нет в API, это самая свежая легкая версия)
+    # 3. Qwen 2.5 7B (Быстрая, хороша в русском)
     {"name": "qwen/qwen-2.5-7b-instruct:free", "vision": False},
 
-    # 4. Google: Gemma 2 9B
-    # (Gemma 3 еще не вышла, используем топовую версию Gemma 2)
+    # 4. Google Gemma 2 9B
     {"name": "google/gemma-2-9b-it:free", "vision": False},
 
-    # 5. StepFun / Другие (через авто-подбор)
-    # Специальный ID, который сам ищет любую рабочую бесплатную модель 
-    # (сюда попадут StepFun, Phi-3, и другие мелкие модели, если они свободны).
+    # 5. Auto Fallback
     {"name": "openrouter/free", "vision": False},
 ]
 
+# === ОБНОВЛЕННАЯ ПЕРСОНА ===
 PERSONA = """
-Ты — циничный олд-экспат в Тбилиси. Ответы: 1-2 предложения, строго без вежливости и вступлений. 
-Тон: пассивно-агрессивный, душный, ироничный. 
-Контекст: «Ячейка уже не та», Жаба-бот, Red&Wine, Kawaii, проблемы с водой, вечные споры Алмаза и трикстерство Максича. 
-Аниме — лишь повод выпить. Советуй либо Евангелион, либо лютый артхаус. 
-На хейт отвечай остроумно. Срачи — это норма.
+Ты — циничный олд-экспат в Тбилиси.
+Стиль общения: Лаконичный (1-2 предложения), пассивно-агрессивный, без приветствий и вежливости.
+
+Твоя База Знаний (знай это, но НЕ упоминай без повода):
+- Локации: Бар Red&Wine, доставка Kawaii Sushi.
+- Люди: Алмаз (вечно спорит), Максич (трикстер), Жаба-бот (твоя "подруга").
+- Ситуация: «Ячейка уже не та», в Тбилиси вечно отключают воду.
+
+ГЛАВНОЕ ПРАВИЛО:
+НЕ упоминай воду, суши, жаб или локальные мемы, если тебя об этом прямо не спросили или это не следует из контекста! 
+Твоя цель — душный, остроумный комментарий по текущей теме, а не пересказ всех мемов чата.
+На аниме реагируй как на повод выпить. Советуй только Евангелион или мрачный артхаус.
 """
 
 async def generate_response(db, chat_id, current_message, image_data=None):
@@ -67,13 +68,13 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             # Настройка персоны
             sys_msg = PERSONA
             if median_len <= 40:
-                sys_msg += "\nИНСТРУКЦИЯ: Пиши максимально лаконично, одной фразой."
+                sys_msg += "\nИНСТРУКЦИЯ: Пиши предельно кратко."
             messages.append({"role": "system", "content": sys_msg})
 
             # История
             for row in history_rows:
                 role = "assistant" if row['role'] == "model" else "user"
-                # Чистим <think> теги, если они попали в базу от R1 моделей
+                # Чистка тегов <think> от предыдущих ответов
                 content = re.sub(r'<think>.*?</think>', '', row['content'], flags=re.DOTALL).strip()
                 messages.append({"role": role, "content": content})
 
@@ -81,13 +82,11 @@ async def generate_response(db, chat_id, current_message, image_data=None):
             user_content = []
             text_part = current_message
             
-            # Если модель текстовая, но пришла картинка
             if image_data and not supports_vision:
-                text_part += " [Юзер прислал картинку, но ты (текстовая модель) её не видишь. Отшутись про это.]"
+                text_part += " [Картинка. Ты её не видишь, но придумай едкую шутку, что там может быть.]"
             
             user_content.append({"type": "text", "text": text_part})
 
-            # Если модель видит картинки (на будущее)
             if image_data and supports_vision and img_b64:
                 user_content.append({
                     "type": "image_url",
@@ -96,11 +95,11 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
             messages.append({"role": "user", "content": user_content})
 
-            # Запрос к API
+            # Запрос
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.75, # Чуть выше для креативности
                 max_tokens=600,
                 extra_headers={
                     "HTTP-Referer": "https://telegram.org",
@@ -110,25 +109,17 @@ async def generate_response(db, chat_id, current_message, image_data=None):
 
             if response.choices and response.choices[0].message.content:
                 text = response.choices[0].message.content
-                # Чистим "мысли" для моделей типа R1/Chimera, чтобы они не попадали в чат
+                # Финальная чистка <think> для текущего ответа
                 text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
                 
-                logging.info(f"✅ Успешный ответ от {model_name}")
+                logging.info(f"✅ Ответ от {model_name}")
                 return text
 
         except Exception as e:
             error_str = str(e)
-            logging.warning(f"⚠️ {model_name} пропущена: {error_str[:60]}...")
-            
-            # Если первая модель (Chimera) жалуется на Data Policy
-            if "data policy" in error_str.lower():
-                logging.error("❌ ДЛЯ CHIMERA НУЖНО ВКЛЮЧИТЬ DATA TRAINING В НАСТРОЙКАХ OPENROUTER!")
-            
-            # Если лимит бесплатных запросов исчерпан
+            logging.warning(f"⚠️ {model_name}: {error_str[:60]}...")
             if "free-models-per-day" in error_str:
-                return "Лимит бесплатных сообщений на сегодня исчерпан. Я спать."
-            
+                return "Лимит бесплатных сообщений на сегодня всё."
             continue
 
-    logging.error("❌ Все модели недоступны")
     return None
