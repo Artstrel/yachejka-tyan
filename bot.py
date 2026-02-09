@@ -136,4 +136,23 @@ async def main_handler(message: types.Message):
             if sticker_id:
                 try:
                     # Небольшая задержка перед стикером для естественности
-                    await asyncio.sleep(
+                    await asyncio.sleep(1) 
+                    await bot.send_sticker(chat_id, sticker_id)
+                except Exception as e:
+                    logging.error(f"❌ Не удалось отправить стикер: {e}")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка отправки: {e}")
+
+# --- ТОЧКА ВХОДА ---
+
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("📡 Запуск Polling...")
+    await dp.start_polling(bot, allowed_updates=["message"])
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот выключен вручную")
