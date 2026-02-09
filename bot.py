@@ -69,7 +69,7 @@ async def main_handler(message: types.Message):
 
     chat_id = message.chat.id
     # Получаем ID ветки (топика), если сообщение пришло оттуда
-    thread_id = message.message_thread_id 
+    thread_id = message.message_thread_id
     
     user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
@@ -110,6 +110,10 @@ async def main_handler(message: types.Message):
 
     if config.DATABASE_URL:
         asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
+
+    if config.DATABASE_URL:
+        # Добавляем аргумент message_thread_id
+        asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id))
 
     # Генерация
     ai_reply = await generate_response(db, chat_id, text, image_data)
