@@ -4,5 +4,5 @@ motor
 dnspython
 python-dotenv
 Pillow
-google-generativeai
+openai
 flask
