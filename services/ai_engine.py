@@ -2,6 +2,7 @@ import logging
 import base64
 import io
 import re
+import random
 from openai import AsyncOpenAI
 from config import OPENROUTER_API_KEY
 from services.shikimori import search_anime_info # <-- Импортируем наш сервис
