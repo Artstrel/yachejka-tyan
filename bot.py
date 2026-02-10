@@ -17,11 +17,12 @@ except Exception:
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand # <--- Добавили тип для команд
 
 import config
 from database.db import Database
-# ВАЖНО: Добавили импорт is_event_query
-from services.ai_engine import generate_response, is_event_query 
+# ВАЖНО: Добавили is_summary_query
+from services.ai_engine import generate_response, is_event_query, is_summary_query
 from keep_alive import start_server
 
 logging.basicConfig(
@@ -38,8 +39,6 @@ bot = Bot(
 )
 BOT_INFO = None
 
-# ... (Startup/Shutdown без изменений) ...
-
 async def on_startup(dispatcher: Dispatcher):
     logging.info("🚀 Запуск процессов...")
     if config.DATABASE_URL:
@@ -52,6 +51,18 @@ async def on_startup(dispatcher: Dispatcher):
     global BOT_INFO
     BOT_INFO = await bot.get_me()
     logging.info(f"🤖 Авторизован как @{BOT_INFO.username}")
+    
+    # --- АВТОМАТИЧЕСКАЯ УСТАНОВКА КОМАНД ---
+    # Чтобы не бегать в BotFather каждый раз
+    commands = [
+        BotCommand(command="start", description="👋 Приветствие"),
+        BotCommand(command="summary", description="📜 Краткая сводка (о чем говорили)"),
+        BotCommand(command="events", description="📅 Анонсы и встречи"),
+        BotCommand(command="help", description="❓ Помощь")
+    ]
+    await bot.set_my_commands(commands)
+    logging.info("✅ Команды бота обновлены")
+
     start_server()
 
 async def on_shutdown(dispatcher: Dispatcher):
@@ -66,45 +77,39 @@ async def main_handler(message: types.Message):
 
     chat_id = message.chat.id
     thread_id = message.message_thread_id
+    msg_id = message.message_id
     user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
-    # Логируем (полезно для отладки)
-    # logging.info(f"📩 Msg: {text[:20]}...") 
-
     # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-    # === ФИЛЬТРЫ ОТВЕТА (ГЛАВНОЕ ИЗМЕНЕНИЕ) ===
+    # === ФИЛЬТРЫ ОТВЕТА ===
     is_mentioned = text and f"@{BOT_INFO.username}" in text
     is_reply_to_me = message.reply_to_message and \
                      message.reply_to_message.from_user.id == BOT_INFO.id
     
-    # Проверяем, вопрос ли это про ивент
-    is_event_question = is_event_query(text)
+    # Проверки на тип вопроса
+    is_event = is_event_query(text)
+    is_summary = is_summary_query(text)
+    is_command = text.startswith("/") # <--- Любая команда (напр. /start)
 
-    # Шанс ответа для ОБЫЧНОГО флуда
     chance = 0.15 
     
-    # ЛОГИКА:
-    # Отвечаем, если:
-    # 1. Меня тегнули (is_mentioned)
-    # 2. Это реплай мне (is_reply_to_me)
-    # 3. Это ВОПРОС ПРО ИВЕНТ (is_event_question) <--- НОВОЕ УСЛОВИЕ
-    # 4. Или просто повезло (random > chance)
-    
-    should_answer = is_mentioned or is_reply_to_me or is_event_question or (random.random() < chance)
+    # ЛОГИКА: Отвечаем, если это команда, вопрос про ивент, саммари, тег или рандом
+    should_answer = is_command or is_mentioned or is_reply_to_me or is_event or is_summary or (random.random() < chance)
+
+    # Сохраняем сообщение юзера (даже если не отвечаем)
+    if config.DATABASE_URL:
+        # Используем await, чтобы гарантировать порядок сообщений
+        await db.add_message(chat_id, msg_id, message.from_user.id, user_name, 'user', text, thread_id)
 
     if not should_answer:
-        # Если не отвечаем, то просто сохраняем в базу (чтобы помнить контекст) и выходим
-        if config.DATABASE_URL:
-            # Используем create_task, чтобы не тормозить
-            asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id))
         return
 
-    # Если мы здесь — значит, бот решил ответить!
+    # Typing...
     try: await bot.send_chat_action(chat_id=chat_id, action="typing")
     except: pass
 
@@ -121,26 +126,19 @@ async def main_handler(message: types.Message):
             if not text: text = "[Photo]"
         except Exception: pass
 
-    # Сохраняем сообщение юзера перед ответом
-    if config.DATABASE_URL:
-        await db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id)
-
-    # Генерация ответа
-    # Передаем bot, чтобы AI мог проверить закрепы
-# Генерация
+    # Генерация
     ai_reply = await generate_response(db, chat_id, text, bot, image_data)
 
-    # ИСПРАВЛЕНИЕ: Проверяем, что ответ не пустой
-    if not ai_reply: 
+    if not ai_reply:
         return
 
     try:
         sent_msg = await message.reply(ai_reply)
         
         if config.DATABASE_URL:
-            asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
+            asyncio.create_task(db.add_message(chat_id, sent_msg.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
 
-        # Стикер (если уместно)
+        # Стикер
         if config.DATABASE_URL and random.random() < 0.3:
             sticker_id = await db.get_random_sticker()
             if sticker_id:
