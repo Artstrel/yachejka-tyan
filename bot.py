@@ -127,13 +127,15 @@ async def main_handler(message: types.Message):
 
     # Генерация ответа
     # Передаем bot, чтобы AI мог проверить закрепы
+# Генерация
     ai_reply = await generate_response(db, chat_id, text, bot, image_data)
 
-    if ai_reply is None:
+    # ИСПРАВЛЕНИЕ: Проверяем, что ответ не пустой
+    if not ai_reply: 
         return
 
     try:
-        await message.reply(ai_reply)
+        sent_msg = await message.reply(ai_reply)
         
         if config.DATABASE_URL:
             asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
