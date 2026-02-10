@@ -20,17 +20,16 @@ from aiogram.client.default import DefaultBotProperties
 
 import config
 from database.db import Database
-from services.ai_engine import generate_response
+# ВАЖНО: Добавили импорт is_event_query
+from services.ai_engine import generate_response, is_event_query 
 from keep_alive import start_server
 
-# Логирование
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     stream=sys.stdout
 )
 
-# Инициализация
 dp = Dispatcher()
 db = Database(config.DATABASE_URL)
 bot = Bot(
@@ -39,7 +38,7 @@ bot = Bot(
 )
 BOT_INFO = None
 
-# --- Startup/Shutdown ---
+# ... (Startup/Shutdown без изменений) ...
 
 async def on_startup(dispatcher: Dispatcher):
     logging.info("🚀 Запуск процессов...")
@@ -61,37 +60,51 @@ async def on_shutdown(dispatcher: Dispatcher):
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
-# --- ХЕНДЛЕРЫ ---
-
 @dp.message(F.text | F.photo | F.sticker)
 async def main_handler(message: types.Message):
     if not BOT_INFO: return
 
     chat_id = message.chat.id
-    # Получаем ID ветки (топика), если сообщение пришло оттуда
     thread_id = message.message_thread_id
-    
     user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
-    logging.info(f"📩 Message from {user_name} (Topic: {thread_id}): {text[:30]}...")
+    # Логируем (полезно для отладки)
+    # logging.info(f"📩 Msg: {text[:20]}...") 
 
     # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-    # Фильтры (Reply, Mention, Random)
+    # === ФИЛЬТРЫ ОТВЕТА (ГЛАВНОЕ ИЗМЕНЕНИЕ) ===
     is_mentioned = text and f"@{BOT_INFO.username}" in text
     is_reply_to_me = message.reply_to_message and \
                      message.reply_to_message.from_user.id == BOT_INFO.id
     
-    # Шанс ответа увеличил до 50% для тестов (было 0.25)
-    # Если хочешь реже — верни 0.25 или 0.1
+    # Проверяем, вопрос ли это про ивент
+    is_event_question = is_event_query(text)
+
+    # Шанс ответа для ОБЫЧНОГО флуда
     chance = 0.15 
-    if not (is_mentioned or is_reply_to_me) and random.random() > chance:
+    
+    # ЛОГИКА:
+    # Отвечаем, если:
+    # 1. Меня тегнули (is_mentioned)
+    # 2. Это реплай мне (is_reply_to_me)
+    # 3. Это ВОПРОС ПРО ИВЕНТ (is_event_question) <--- НОВОЕ УСЛОВИЕ
+    # 4. Или просто повезло (random > chance)
+    
+    should_answer = is_mentioned or is_reply_to_me or is_event_question or (random.random() < chance)
+
+    if not should_answer:
+        # Если не отвечаем, то просто сохраняем в базу (чтобы помнить контекст) и выходим
+        if config.DATABASE_URL:
+            # Используем create_task, чтобы не тормозить
+            asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id))
         return
 
+    # Если мы здесь — значит, бот решил ответить!
     try: await bot.send_chat_action(chat_id=chat_id, action="typing")
     except: pass
 
@@ -108,47 +121,34 @@ async def main_handler(message: types.Message):
             if not text: text = "[Photo]"
         except Exception: pass
 
+    # Сохраняем сообщение юзера перед ответом
     if config.DATABASE_URL:
-        asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text))
+        await db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id)
 
-    if config.DATABASE_URL:
-        # Добавляем аргумент message_thread_id
-        asyncio.create_task(db.add_message(chat_id, message.from_user.id, user_name, 'user', text, thread_id))
-
-    # Генерация
-    ai_reply = await generate_response(db, chat_id, text, image_data)
+    # Генерация ответа
+    # Передаем bot, чтобы AI мог проверить закрепы
+    ai_reply = await generate_response(db, chat_id, text, bot, image_data)
 
     if ai_reply is None:
         return
 
-    # Отправка
     try:
-        # message.reply сам знает, в какую ветку отвечать
         await message.reply(ai_reply)
         
         if config.DATABASE_URL:
-            asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply))
+            asyncio.create_task(db.add_message(chat_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
 
-        # 2. ОТПРАВКА СТИКЕРА (ИСПРАВЛЕНО)
-        # 30% шанс стикера
+        # Стикер (если уместно)
         if config.DATABASE_URL and random.random() < 0.3:
             sticker_id = await db.get_random_sticker()
             if sticker_id:
                 try:
                     await asyncio.sleep(1)
-                    # ВАЖНО: Передаем message_thread_id, чтобы стикер ушел в нужную ветку
-                    await bot.send_sticker(
-                        chat_id=chat_id, 
-                        sticker=sticker_id,
-                        message_thread_id=thread_id
-                    )
-                except Exception as e:
-                    logging.error(f"❌ Не удалось отправить стикер: {e}")
+                    await bot.send_sticker(chat_id=chat_id, sticker=sticker_id, message_thread_id=thread_id)
+                except Exception: pass
 
     except Exception as e:
         logging.error(f"❌ Ошибка отправки: {e}")
-
-# --- MAIN ---
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
