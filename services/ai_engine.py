@@ -22,90 +22,102 @@ def clean_response(text):
     if not text: return ""
     return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
+async def extract_anime_title(text):
+    """
+    Использует дешевую модель, чтобы вытащить название аниме из текста анонса.
+    """
+    try:
+        messages = [
+            {"role": "system", "content": "Твоя задача: найти название аниме, фильма или игры в тексте. Верни ТОЛЬКО название (на русском или английском). Если явного названия нет, верни 'NO'."},
+            {"role": "user", "content": f"Текст:\n{text[:500]}"}
+        ]
+        response = await client.chat.completions.create(
+            model="google/gemma-2-9b-it:free", # Быстрая и бесплатная модель
+            messages=messages,
+            temperature=0.1,
+            max_tokens=20
+        )
+        title = response.choices[0].message.content.strip()
+        # Чистим от кавычек и лишнего
+        title = re.sub(r"['\"«»]", "", title)
+        return title if title != "NO" and len(title) > 2 else None
+    except Exception as e:
+        logging.error(f"Title extraction failed: {e}")
+        return None
+
 async def generate_response(db, chat_id, current_message, image_data=None):
+    # 1. Получаем контекст диалога (последние 10 сообщений)
     history_rows = await db.get_context(chat_id)
+    
+    # 2. Ищем анонсы за 21 день (БЕЗ лимита в 10 сообщений, поиск по базе)
     raw_events = await db.get_potential_announcements(chat_id, days=21, limit=5)
 
     found_events_text = ""
-    shikimori_context = ""
+    shikimori_info_block = ""
     
     if raw_events:
-        # 1. Формируем текст анонсов
         events_list = []
-        full_text_for_analysis = ""
+        full_text_batch = ""
         
         for ev in raw_events:
             content = ev['content']
             date_str = ev.get('timestamp').strftime('%d.%m')
             user_name = ev['user_name']
             events_list.append(f"--- [POST BY {user_name} | {date_str}] ---\n{content}\n")
-            full_text_for_analysis += content + "\n"
+            full_text_batch += content + "\n"
         
         found_events_text = "\n".join(events_list)
 
-        # 2. ПОПЫТКА НАЙТИ АНИМЕ ЧЕРЕЗ SHIKIMORI
-        # Мы делаем быстрый запрос к LLM, чтобы она выделила название, 
-        # потому что Regex тут бессилен.
-        try:
-            extraction_prompt = [
-                {"role": "system", "content": "Твоя задача: найти название аниме или фильма в тексте. Верни ТОЛЬКО название. Если нет - верни 'NO'."},
-                {"role": "user", "content": f"Текст анонсов:\n{full_text_for_analysis[:2000]}"} # Ограничиваем длину
-            ]
+        # 3. ПОПЫТКА ИНТЕГРАЦИИ SHIKIMORI
+        # Если в найденных анонсах есть слова "аниме", "тайтл" и т.д., пробуем найти инфо
+        if re.search(r"(аниме|anime|тайтл|сери|сезон)", full_text_batch, re.IGNORECASE):
+            detected_title = await extract_anime_title(full_text_batch)
             
-            # Используем быструю модель для извлечения
-            extractor = await client.chat.completions.create(
-                model="google/gemma-2-9b-it:free",
-                messages=extraction_prompt,
-                temperature=0.1,
-                max_tokens=20
-            )
-            
-            title_candidate = extractor.choices[0].message.content.strip()
-            
-            if title_candidate and title_candidate != "NO" and len(title_candidate) > 2:
-                # Если нашли название -> идем в Shikimori
-                logging.info(f"🔎 Detected Anime Title: {title_candidate}. Searching Shikimori...")
-                anime_data = await search_anime_info(title_candidate)
+            if detected_title:
+                logging.info(f"🎬 Найден кандидат на название: {detected_title}")
+                anime_data = await search_anime_info(detected_title)
                 
                 if anime_data:
-                    shikimori_context = f"""
-🧠 ДАННЫЕ ИЗ БАЗЫ SHIKIMORI (ДЛЯ СПРАВКИ):
-Название: {anime_data['title']}
+                    status_icon = "🟢" if anime_data['status'] == 'ongoing' else "🔴"
+                    shikimori_info_block = f"""
+🧠 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ SHIKIMORI (Для справки):
+Название: {anime_data['title']} ({anime_data['original_title']})
 Рейтинг: {anime_data['score']} ⭐
-Тип: {anime_data['kind']} ({anime_data['status']})
-Эпизодов: {anime_data['episodes']}
+Тип: {anime_data['kind']} | Статус: {status_icon} {anime_data['status']}
+Эпизоды: {anime_data['episodes']}
 Ссылка: {anime_data['url']}
-(Используй эту инфу, чтобы рассказать подробнее, если уместно)
+(Используй эти данные, чтобы дополнить ответ, если они подходят по контексту)
 """
-        except Exception as e:
-            logging.error(f"Extraction error: {e}")
 
-    # === ОСНОВНОЙ ПРОМПТ ===
+    # === ФОРМИРОВАНИЕ ПРОМПТА ===
     
     PERSONA = """
-Ты — Ячейка-тян, бот-помощник. Характер: ироничная, полезная, "своя в доску".
-Твоя задача — анализировать анонсы и отвечать на вопросы.
+Ты — Ячейка-тян, бот-помощник аниме-сообщества.
+Твой стиль: дружелюбный, но с легкой иронией. Ты любишь конкретику.
 """
 
     if found_events_text:
         SYSTEM_PROMPT = f"""{PERSONA}
 
-КОНТЕКСТ СООБЩЕНИЙ ЧАТА:
+КОНТЕКСТ: Ниже найдены последние сообщения, похожие на анонсы мероприятий.
+Твоя задача — прочитать их и ответить пользователю.
+
+{shikimori_info_block}
+
+НАЙДЕННЫЕ СООБЩЕНИЯ:
 {found_events_text}
 
-{shikimori_context}
-
 ИНСТРУКЦИЯ:
-1. Если спрашивают про мероприятия, расскажи детали (что, где, когда).
-2. Если мы нашли инфу на Shikimori, обязательно добавь рейтинг и ссылку на аниме.
-3. Если инфы на Shikimori нет, просто опирайся на текст сообщений.
-4. Не выдумывай факты.
+1. Выдели суть мероприятия: Что? Где? Когда?
+2. Если мы нашли данные на Shikimori (рейтинг, эпизоды), обязательно добавь их в ответ красиво.
+3. Если данных Shikimori нет, просто перескажи анонс.
+4. Указывай локацию точно (если D22 — пиши адрес 4 Amaghleba St).
+5. Не выдумывай того, чего нет в тексте.
 """
     else:
         SYSTEM_PROMPT = f"""{PERSONA}
-В базе нет свежих закрепленных анонсов.
-Если спросят "куда сходить", ответь, что пока тихо, но можно спросить у админов.
-Не говори, что "все спились", если только это не шутка в контексте.
+В базе данных за последние 3 недели не найдено сообщений, похожих на анонсы (с датами, временем или локациями).
+Если спрашивают "Куда сходить?", честно скажи: "Пока тихо, свежих анонсов не вижу. Может, спросить у админов?"
 """
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -131,22 +143,16 @@ async def generate_response(db, chat_id, current_message, image_data=None):
     messages.append({"role": "user", "content": user_content})
 
     for model_cfg in MODELS:
-        model_name = model_cfg["name"]
         try:
             response = await client.chat.completions.create(
-                model=model_name,
+                model=model_cfg["name"],
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1000,
+                max_tokens=1200,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
-
             if response.choices and response.choices[0].message.content:
-                final_text = clean_response(response.choices[0].message.content)
-                if not final_text: continue
-                return final_text
-
-        except Exception as e:
-            continue
+                return clean_response(response.choices[0].message.content)
+        except Exception: continue
 
     return None
