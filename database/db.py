@@ -19,10 +19,7 @@ class Database:
             logging.error(f"❌ MongoDB Error: {e}")
 
     async def add_message(self, chat_id, message_id, user_id, user_name, role, content, thread_id=None):
-        # ЗАЩИТА ПРИ ЗАПИСИ: Если content пришел None, превращаем его в пустую строку
-        if content is None:
-            content = ""
-            
+        if content is None: content = ""
         await self.messages.insert_one({
             "chat_id": chat_id,
             "message_id": message_id,
@@ -39,7 +36,7 @@ class Database:
         history = await cursor.to_list(length=limit)
         return history[::-1]
 
-    async def get_chat_history_for_summary(self, chat_id, limit=50):
+    async def get_chat_history_for_summary(self, chat_id, limit=300):
         query = {"chat_id": chat_id, "role": "user"}
         cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
         history = await cursor.to_list(length=limit)
@@ -48,22 +45,31 @@ class Database:
     async def get_potential_announcements(self, chat_id, days=60, limit=10):
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         
+        # --- БЕЗОПАСНЫЙ ЗАПРОС ---
+        # Мы убираем $strLenCP из прямого вызова и используем $type: "string" как жесткий фильтр
+        
         # 1. ПОИСК В ВЕТКЕ АНОНСОВ
         if config.ANNOUNCEMENT_THREAD_ID:
             tid = int(config.ANNOUNCEMENT_THREAD_ID)
             query = {
                 "timestamp": {"$gte": cutoff_date},
-                "content": {"$type": "string"}, # <--- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Ищем только строки
-                "$expr": {"$gt": [{"$strLenCP": "$content"}, 15]} 
+                "content": {"$type": "string", "$ne": ""}, # Только непустые строки
             }
             if tid < 0: 
                 query["chat_id"] = tid 
             else:
                 query["chat_id"] = chat_id
                 query["message_thread_id"] = tid
-
-            cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
-            return await cursor.to_list(length=limit)
+            
+            # Мы убрали проверку длины на уровне базы, чтобы не падало.
+            # Отфильтруем короткие сообщения уже в Python (это безопасно и быстро).
+            
+            cursor = self.messages.find(query).sort("timestamp", -1).limit(limit * 2) # Берем с запасом
+            raw_data = await cursor.to_list(length=limit * 2)
+            
+            # Python-фильтрация длины
+            filtered = [msg for msg in raw_data if len(msg.get('content', '')) > 15]
+            return filtered[:limit]
 
         # 2. ГЛОБАЛЬНЫЙ ПОИСК
         logging.info("🔎 Keyword scan mode (Broad search)")
@@ -84,13 +90,15 @@ class Database:
             "chat_id": chat_id,
             "role": "user",
             "timestamp": {"$gte": cutoff_date},
-            # ЗАЩИТА: проверяем, что это строка, И применяем регулярку
-            "content": {"$type": "string", "$regex": regex_pattern, "$options": "i"}, 
-            "$expr": {"$gt": [{"$strLenCP": "$content"}, 30]} 
+            "content": {"$type": "string", "$regex": regex_pattern, "$options": "i"}
         }
         
-        cursor = self.messages.find(query).sort("timestamp", -1).limit(20)
-        return await cursor.to_list(length=20)
+        # Тоже фильтруем длину в Python
+        cursor = self.messages.find(query).sort("timestamp", -1).limit(30)
+        raw_data = await cursor.to_list(length=30)
+        filtered = [msg for msg in raw_data if len(msg.get('content', '')) > 30]
+        
+        return filtered[:limit]
 
     async def add_sticker(self, file_id, emoji):
         exists = await self.stickers.find_one({"file_id": file_id})
