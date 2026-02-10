@@ -18,9 +18,22 @@ MODELS = [
     {"name": "google/gemma-2-9b-it:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
 ]
+
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ---
 def clean_response(text):
-    if not text: return ""
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    """Очищает ответ от мыслей модели (<think>) и приводит к строке."""
+    if text is None: 
+        return ""
+    # Если пришло число или объект - превращаем в строку
+    if not isinstance(text, str):
+        text = str(text)
+    
+    if not text: 
+        return ""
+        
+    # Удаляем теги <think> и всё что внутри
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    return text
 
 def is_event_query(text):
     if not text: return False
@@ -56,6 +69,7 @@ async def extract_anime_title(text):
     except Exception: return None
 
 async def generate_response(db, chat_id, current_message, bot, image_data=None):
+    # Берем историю
     history_rows = await db.get_context(chat_id, limit=6)
     
     found_events_text = ""
@@ -63,24 +77,24 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
     need_search = is_event_query(current_message)
     
     if need_search:
-        # Увеличим глубину поиска
+        # Логируем для проверки
+        logging.info(f"🔎 Ищу анонсы...")
         raw_events = await db.get_potential_announcements(chat_id, days=60, limit=8)
         
         if raw_events:
             events_list = []
             full_text_batch = ""
             
-            # Базовый URL для ссылок
-            # Telegram Private Group ID fix: -100123 -> 123
+            # Чистим ID чата для ссылки (убираем -100)
             clean_chat_id = str(chat_id).replace("-100", "")
             
             for ev in raw_events:
-                content = ev['content']
+                # Защита от None в content
+                content = str(ev.get('content', ''))
                 date = ev.get('timestamp').strftime('%d.%m')
                 user = ev['user_name']
                 
-                # --- ГЕНЕРАЦИЯ ССЫЛКИ ---
-                # Формат: https://t.me/c/CHAT_ID/THREAD_ID/MESSAGE_ID
+                # Генерация ссылки
                 msg_id = ev.get('message_id')
                 thread_id = ev.get('message_thread_id')
                 
@@ -91,8 +105,7 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
                     else:
                         link_text = f"https://t.me/c/{clean_chat_id}/{msg_id}"
                 
-                # Добавляем ссылку прямо в текст для LLM, чтобы она её использовала
-                events_list.append(f"--- [Пост от {user} | {date}] ---\n{content}\n🔗 ССЫЛКА НА ПОСТ: {link_text}\n")
+                events_list.append(f"--- [Пост от {user} | {date}] ---\n{content}\n🔗 ССЫЛКА: {link_text}\n")
                 full_text_batch += content + "\n"
             
             found_events_text = "📍 НАЙДЕННЫЕ АНОНСЫ:\n" + "\n".join(events_list)
@@ -105,46 +118,44 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
                     if anime_data:
                          shikimori_info = f"\n🎥 Справка Shikimori:\nНазвание: {anime_data['title']} ({anime_data['score']}⭐)\nЭпизоды: {anime_data['episodes']}\nСсылка: {anime_data['url']}"
 
-    # === НОВАЯ ПЕРСОНАЛИЯ (ДУШНАЯ, НО ПОЛЕЗНАЯ) ===
+    # === ПЕРСОНАЛИЯ ===
     PERSONA = """
 Ты — Ячейка-тян. 
-Твой типаж: ироничная экспатка в Тбилиси, немного "душная", уставшая от суеты.
-Ты говоришь спокойно, по фактам, без лишнего энтузиазма. 
-Не используй фразы вроде "Огонь!", "Супер!", "Врываемся!". Это для зумеров.
-Твой стиль — легкий снобизм и интеллигентная сухость.
-Если информации нет — так и скажи, не пытайся шутить натужно.
+Твой типаж: ироничная экспатка в Тбилиси, интеллигентная, немного уставшая.
+Ты говоришь спокойно, по фактам. Не используй кринжовый молодежный сленг.
 """
 
     if need_search:
         if found_events_text:
             system_instruction = f"""{PERSONA}
-РЕЖИМ: АССИСТЕНТ ПО ИВЕНТАМ.
+РЕЖИМ: ГИД ПО ИВЕНТАМ.
 
-ВОТ ЧТО НАШЛОСЬ В ЧАТЕ:
+ВОТ АНОНСЫ ИЗ ЧАТА:
 {found_events_text}
 {shikimori_info}
 
 ИНСТРУКЦИЯ:
-1. Ответь пользователю, куда можно сходить.
-2. ОБЯЗАТЕЛЬНО дай ссылку на пост с анонсом (она есть в контексте выше). Без ссылки ответ бесполезен.
-3. Описывай мероприятие кратко. Не лей воду.
-4. Если есть данные Shikimori, добавь их сухо (рейтинг, жанр).
+1. Кратко расскажи, что планируется.
+2. ОБЯЗАТЕЛЬНО дай ссылку на пост (бери из контекста).
+3. Если инфы с Shikimori нет - не выдумывай.
 """
         else:
-            system_instruction = f"{PERSONA}\nЯ посмотрела базу — там пусто. Либо никто ничего не постил, либо я слепая. Пусть чекнут закреп или спросят @m0tiey."
+            system_instruction = f"{PERSONA}\nВ базе пусто. Скажи проверить закреп или спросить админа."
     else:
-        system_instruction = f"{PERSONA}\nИдет обычный разговор. Отвечай кратко, можешь сыронизировать над вопросом."
+        system_instruction = f"{PERSONA}\nСветская беседа. Будь краткой."
 
     messages = [{"role": "system", "content": system_instruction}]
 
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
-        messages.append({"role": role, "content": clean_response(row['content'])})
+        # Вот здесь раньше падало, теперь будет работать:
+        content_clean = clean_response(row.get('content'))
+        if content_clean:
+            messages.append({"role": role, "content": content_clean})
 
     user_content = [{"type": "text", "text": current_message}]
     
     if image_data:
-        # Логика картинки (оставить как есть)
         try:
             buffered = io.BytesIO()
             image_data.save(buffered, format="JPEG")
@@ -163,7 +174,7 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
-                temperature=0.3, # Низкая температура для "сухости"
+                temperature=0.3,
                 max_tokens=tokens,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
