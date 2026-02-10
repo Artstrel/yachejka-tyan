@@ -189,12 +189,13 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
 
     for model_cfg in MODELS:
         try:
+            max_tok = 1000 if (need_search or need_summary) else 150
             # Снижаем температуру для стабильности
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
                 temperature=0.3, # <--- ВАЖНО: Низкая температура убирает галлюцинации
-                max_tokens=800,
+                max_tokens=max_tok,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
             if response.choices:
