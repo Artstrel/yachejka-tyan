@@ -18,11 +18,10 @@ class Database:
         except Exception as e:
             logging.error(f"❌ MongoDB Error: {e}")
 
-    # ИЗМЕНЕНИЕ: добавили message_id
     async def add_message(self, chat_id, message_id, user_id, user_name, role, content, thread_id=None):
         await self.messages.insert_one({
             "chat_id": chat_id,
-            "message_id": message_id, # <--- Сохраняем ID сообщения
+            "message_id": message_id,
             "message_thread_id": thread_id,
             "user_id": user_id,
             "user_name": user_name,
@@ -36,10 +35,21 @@ class Database:
         history = await cursor.to_list(length=limit)
         return history[::-1]
 
-    async def get_potential_announcements(self, chat_id, days=45, limit=10):
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+    # --- НОВАЯ ФУНКЦИЯ ДЛЯ САММАРИ ---
+    async def get_chat_history_for_summary(self, chat_id, limit=50):
+        # Берем последние 50 сообщений, но ТОЛЬКО от пользователей (role='user')
+        # Чтобы бот не пересказывал свои же ответы
+        query = {"chat_id": chat_id, "role": "user"}
         
-        # ЛОГИКА ДЛЯ ВЕТКИ АНОНСОВ
+        # Если нужно, можно добавить фильтр по thread_id, но для саммари обычно интересен весь поток
+        # Если хотите саммари только текущей ветки, раскомментируйте код в main_handler для передачи thread_id
+        
+        cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
+        history = await cursor.to_list(length=limit)
+        return history[::-1] # Разворачиваем (старые -> новые)
+
+    async def get_potential_announcements(self, chat_id, days=60, limit=10):
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
         if config.ANNOUNCEMENT_THREAD_ID:
             tid = int(config.ANNOUNCEMENT_THREAD_ID)
             query = {
@@ -51,12 +61,9 @@ class Database:
             else:
                 query["chat_id"] = chat_id
                 query["message_thread_id"] = tid
-
-            # Возвращаем message_id и message_thread_id для генерации ссылок
             cursor = self.messages.find(query).sort("timestamp", -1).limit(limit)
             return await cursor.to_list(length=limit)
 
-        # ЛОГИКА ГЛОБАЛЬНОГО ПОИСКА
         logging.info("🔎 Keyword scan mode (Broad search)")
         keywords = [
             "аниме", "anime", "тайтл", "title", "серия", "эпизод", "сезон", 
@@ -78,7 +85,6 @@ class Database:
             "$expr": {"$gt": [{"$strLenCP": "$content"}, 30]}, 
             "content": {"$regex": regex_pattern, "$options": "i"}
         }
-        
         cursor = self.messages.find(query).sort("timestamp", -1).limit(20)
         return await cursor.to_list(length=20)
 
