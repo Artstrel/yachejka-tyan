@@ -20,28 +20,6 @@ MODELS = [
     {"name": "openrouter/free", "vision": False},
 ]
 
-Python
-import logging
-import base64
-import io
-import re
-import random  # <--- ВОТ ЭТОГО ИМПОРТА НЕ ХВАТАЛО
-from openai import AsyncOpenAI
-from config import OPENROUTER_API_KEY
-from services.shikimori import search_anime_info
-
-client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
-
-MODELS = [
-    {"name": "google/gemini-2.0-flash-001", "vision": False}, 
-    {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False},
-    {"name": "google/gemma-2-9b-it:free", "vision": False},
-    {"name": "openrouter/free", "vision": False},
-]
-
 def clean_response(text):
     """Очищает ответ от мыслей модели (<think>) и приводит к строке."""
     if text is None: return ""
