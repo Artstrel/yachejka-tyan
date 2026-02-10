@@ -5,10 +5,14 @@ load_dotenv()
 
 # API Keys
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") # Бывший GEMINI_API_KEY
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DB_NAME = os.getenv("DB_NAME", "yachejka_bot")
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
+
+# === ID ВЕТКИ С АНОНСАМИ ===
+# Важно: эта переменная должна быть здесь, даже если равна 0
+ANNOUNCEMENT_THREAD_ID = 0
 
 if not TELEGRAM_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Не заданы TELEGRAM_TOKEN или OPENROUTER_API_KEY")
