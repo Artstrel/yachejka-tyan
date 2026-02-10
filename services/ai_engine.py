@@ -15,6 +15,8 @@ client = AsyncOpenAI(
 MODELS = [
     {"name": "tngtech/deepseek-r1t2-chimera", "vision": False},
     {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False},
+    {"name": "liquid/lfm-2.5-1.2b-instruct:free", "vision": False},
+    {"name": "venice/uncensored:free", "vision": False},
     {"name": "nvidia/llama-3.1-nemotron-70b-instruct:free", "vision": False},
     {"name": "google/gemma-2-9b-it:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
