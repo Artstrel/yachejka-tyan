@@ -39,7 +39,7 @@ def clean_response(text):
 
 def is_summary_query(text):
     if not text: return False
-    triggers = ["что тут происходит", "о чем речь", "кратко перескажи", "саммари", "summary", "сводка", "итоги"]
+    triggers = ["что тут происходит", "о чем речь", "кратко перескажи", "саммари", "summary", "сводка", "итоги" ]
     return any(t in text.lower() for t in triggers)
 
 def is_event_query(text):
@@ -74,7 +74,7 @@ async def extract_anime_title(text):
 def determine_mood(text):
     text = text.lower()
     # Упрощенные триггеры
-    doom_triggers = ["вода", "свет", "gwp", "отключ", "дорого", "ныть", "устал", "плохо", "грусть"]
+    doom_triggers = ["вода", "свет", "gwp", "отключ", "дорого", "ныть", "устал", "плохо", "грусть" "заебала" "тупая машина"]
     genki_triggers = ["привет", "спасибо", "круто", "класс", "аниме", "пати", "весело", "ура"]
     
     if any(t in text for t in doom_triggers): return "SARCASM" # Заменили DOOMER на SARCASM (безопаснее)
