@@ -18,14 +18,38 @@ MODELS = [
     {"name": "google/gemma-2-9b-it:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
 ]
+
+Python
+import logging
+import base64
+import io
+import re
+import random  # <--- ВОТ ЭТОГО ИМПОРТА НЕ ХВАТАЛО
+from openai import AsyncOpenAI
+from config import OPENROUTER_API_KEY
+from services.shikimori import search_anime_info
+
+client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+
+MODELS = [
+    {"name": "google/gemini-2.0-flash-001", "vision": False}, 
+    {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False},
+    {"name": "google/gemma-2-9b-it:free", "vision": False},
+    {"name": "openrouter/free", "vision": False},
+]
+
 def clean_response(text):
+    """Очищает ответ от мыслей модели (<think>) и приводит к строке."""
     if text is None: return ""
     if not isinstance(text, str): text = str(text)
     if not text: return ""
     return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
-# --- ПРОВЕРКА НА ЗАПРОС СВОДКИ ---
 def is_summary_query(text):
+    """Проверка: просит ли юзер краткий пересказ?"""
     if not text: return False
     triggers = [
         "что тут происходит", "о чем речь", "кратко перескажи", 
@@ -35,6 +59,7 @@ def is_summary_query(text):
     return any(t in text.lower() for t in triggers)
 
 def is_event_query(text):
+    """Проверка: просит ли юзер анонсы?"""
     if not text: return False
     text_lower = text.lower()
     triggers = [
@@ -49,7 +74,7 @@ def is_event_query(text):
 async def extract_anime_title(text):
     try:
         messages = [
-            {"role": "system", "content": "Твоя задача: найти название аниме. Верни ТОЛЬКО название. Если нет, верни 'NO'."},
+            {"role": "system", "content": "Твоя задача: найти название аниме или фильма. Верни ТОЛЬКО название. Если нет, верни 'NO'."},
             {"role": "user", "content": f"Текст:\n{text[:800]}"}
         ]
         response = await client.chat.completions.create(
@@ -64,11 +89,15 @@ async def extract_anime_title(text):
     except Exception: return None
 
 def determine_mood(text):
+    """Определяет настроение: GENKI (веселое) или DOOMER (грустное)."""
     text = text.lower()
-    doom_triggers = ["вода", "свет", "gwp", "отключ", "дорого", "ныть", "устал", "плохо", "дождь", "срач"]
+    doom_triggers = ["вода", "свет", "gwp", "отключ", "дорого", "ныть", "устал", "плохо", "дождь", "срач", "скучно"]
     genki_triggers = ["привет", "спасибо", "круто", "класс", "аниме", "пати", "весело", "любл", "ура", "игра"]
+    
     if any(t in text for t in doom_triggers): return "DOOMER"
     elif any(t in text for t in genki_triggers): return "GENKI"
+    
+    # 70% веселья, 30% грусти
     return "GENKI" if random.random() < 0.7 else "DOOMER"
 
 async def generate_response(db, chat_id, current_message, bot, image_data=None):
@@ -80,9 +109,10 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
     
     # Определяем типы запросов
     need_search = is_event_query(current_message)
-    need_summary = is_summary_query(current_message) # <--- Новый флаг
+    need_summary = is_summary_query(current_message)
     
     current_mood = determine_mood(current_message)
+    logging.info(f"🎭 Mood: {current_mood} | Search: {need_search} | Summary: {need_summary}")
     
     # === ЛОГИКА СВОДКИ (SUMMARY) ===
     if need_summary:
@@ -104,9 +134,13 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
                 user = ev['user_name']
                 msg_id = ev.get('message_id')
                 thread_id = ev.get('message_thread_id')
+                
                 link_text = ""
                 if msg_id:
-                    link_text = f"https://t.me/c/{clean_chat_id}/{thread_id}/{msg_id}" if thread_id else f"https://t.me/c/{clean_chat_id}/{msg_id}"
+                    if thread_id:
+                        link_text = f"https://t.me/c/{clean_chat_id}/{thread_id}/{msg_id}"
+                    else:
+                        link_text = f"https://t.me/c/{clean_chat_id}/{msg_id}"
                 
                 events_list.append(f"--- [Пост от {user} | {date}] ---\n{content}\n🔗 ССЫЛКА: {link_text}\n")
                 full_text_batch += content + "\n"
@@ -149,16 +183,14 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
 
     # === ВЫБОР ИНСТРУКЦИИ ===
     if need_summary:
-        # Инструкция для саммари
         task_instruction = """
 РЕЖИМ: ГЕНЕРАЦИЯ СВОДКИ (SUMMARY).
 Тебе даны последние 50 сообщений из чата.
 Твоя задача:
 1. Кратко пересказать, о чем говорили люди.
-2. Выделить главные темы (кто с кем спорил, кто что скинул, какие новости).
+2. Выделить главные темы.
 3. Упомянуть самых активных участников по именам.
-4. Если был просто флуд — так и скажи, но с иронией (или весельем, в зависимости от настроения).
-5. Не цитируй сообщения дословно, делай выжимку.
+4. Если был просто флуд — так и скажи.
 """
     elif need_search:
         if found_events_text:
@@ -175,21 +207,18 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
     # Собираем сообщения
     messages = [{"role": "system", "content": f"{FULL_SYSTEM_PROMPT}\n{found_events_text}\n{shikimori_info}\n{task_instruction}"}]
 
-    # Добавляем историю
-    # Если это SUMMARY, тут будет 50 сообщений. Если обычный чат — 6.
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
         content_clean = clean_response(row.get('content'))
         user_name = row.get('user_name', 'Anon')
         
-        # Для саммари важно знать, КТО пишет, поэтому добавляем имя в контент
+        # Для саммари важно знать, КТО пишет
         if need_summary and role == "user":
             content_clean = f"{user_name}: {content_clean}"
             
         if content_clean:
             messages.append({"role": role, "content": content_clean})
 
-    # Текущее сообщение юзера
     user_content = [{"type": "text", "text": current_message}]
     if image_data:
         try:
