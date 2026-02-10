@@ -18,111 +18,99 @@ MODELS = [
     {"name": "google/gemma-2-9b-it:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
 ]
+
 def clean_response(text):
     if not text: return ""
     return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
+def is_event_query(text):
+    """Спрашивают ли про мероприятия?"""
+    triggers = [
+        "куда сходить", "что делаем", "какие планы", "анонс", "встреча", 
+        "где собираемся", "когда", "во сколько", "что будет", "фильм", 
+        "аниме", "кино", "ивент", "сегодня", "завтра", "выходные"
+    ]
+    return any(t in text.lower() for t in triggers)
+
 async def extract_anime_title(text):
-    """Используем маленькую модель, чтобы вытащить чистое название из текста анонса"""
     try:
         messages = [
-            {"role": "system", "content": "Твоя задача: найти название аниме, фильма или игры в тексте. Верни ТОЛЬКО название без лишних слов. Если названия нет, верни 'NO'."},
+            {"role": "system", "content": "Твоя задача: найти название аниме/фильма. Верни ТОЛЬКО название. Если нет, верни 'NO'."},
             {"role": "user", "content": f"Текст:\n{text[:1000]}"}
         ]
         response = await client.chat.completions.create(
             model="google/gemma-2-9b-it:free",
             messages=messages,
             temperature=0.1,
-            max_tokens=20
+            max_tokens=30
         )
         title = response.choices[0].message.content.strip()
-        title = re.sub(r"['\"«»]", "", title) # Чистим кавычки
+        title = re.sub(r"['\"«»]", "", title)
         return title if title != "NO" and len(title) > 2 else None
-    except Exception:
-        return None
+    except Exception: return None
 
-async def generate_response(db, chat_id, current_message, image_data=None):
-    # 1. История диалога
-    history_rows = await db.get_context(chat_id)
+async def generate_response(db, chat_id, current_message, bot, image_data=None):
+    # 1. Быстрый контекст диалога (последние 8 сообщений)
+    history_rows = await db.get_context(chat_id, limit=8)
     
-    # 2. Поиск анонсов (теперь с лимитом 100!)
-    raw_events = await db.get_potential_announcements(chat_id, days=30, limit=100)
-
     found_events_text = ""
     shikimori_info = ""
+    need_search = is_event_query(current_message)
     
-    # Обработка анонсов
-    if raw_events:
-        # Сортируем: сначала самые свежие
-        # raw_events.sort(key=lambda x: x['timestamp'], reverse=True)
-        # Берем топ-5 самых свежих для анализа LLM, чтобы не перегрузить контекст
-        top_events = raw_events[:5] 
+    # 2. ЕСЛИ ВОПРОС ПРО ИВЕНТЫ -> Лезем в ветку анонсов
+    if need_search:
+        # Берем 5 последних сообщений из ветки анонсов (очень быстро)
+        raw_events = await db.get_potential_announcements(chat_id, days=30, limit=5)
         
-        events_list = []
-        full_text_batch = ""
-        
-        for ev in top_events:
-            content = ev['content']
-            date = ev.get('timestamp').strftime('%d.%m')
-            user = ev['user_name']
-            events_list.append(f"--- [POST BY {user} | {date}] ---\n{content}\n")
-            full_text_batch += content + "\n"
-        
-        found_events_text = "\n".join(events_list)
+        if raw_events:
+            events_list = []
+            full_text_batch = ""
+            for ev in raw_events:
+                content = ev['content']
+                date = ev.get('timestamp').strftime('%d.%m')
+                user = ev['user_name']
+                events_list.append(f"--- [Пост от {user} | {date}] ---\n{content}\n")
+                full_text_batch += content + "\n"
+            
+            found_events_text = "📍 ИНФОРМАЦИЯ ИЗ ВЕТКИ АНОНСОВ:\n" + "\n".join(events_list)
 
-        # 3. Интеграция с Shikimori
-        # Если в тексте есть намеки на аниме, пробуем найти инфу
-        if re.search(r"(аниме|anime|тайтл|сери|сезон|смотреть|киберслав)", full_text_batch, re.IGNORECASE):
-            detected_title = await extract_anime_title(full_text_batch)
-            if detected_title:
-                logging.info(f"🎬 Найден кандидат: {detected_title}")
-                anime_data = await search_anime_info(detected_title)
-                
-                if anime_data:
-                    status_emoji = "🟢" if anime_data['status'] == 'ongoing' else "🔴"
-                    shikimori_info = f"""
-🧠 ИНФО ИЗ SHIKIMORI:
-Название: {anime_data['title']} ({anime_data['original_title']})
-Рейтинг: {anime_data['score']} ⭐
-Тип: {anime_data['kind']} | {status_emoji} {anime_data['status']}
-Эпизоды: {anime_data['episodes']}
-Ссылка: {anime_data['url']}
-(Добавь эти факты в ответ, если они уместны)
-"""
+            # Shikimori проверка
+            if re.search(r"(аниме|anime|тайтл|сери|киберслав)", full_text_batch, re.IGNORECASE):
+                detected_title = await extract_anime_title(full_text_batch)
+                if detected_title:
+                    anime_data = await search_anime_info(detected_title)
+                    if anime_data:
+                         shikimori_info = f"\n🎥 Shikimori Info:\nНазвание: {anime_data['title']} ({anime_data['score']}⭐)\nЭпизоды: {anime_data['episodes']}\nСсылка: {anime_data['url']}"
 
-    # === ИТОГОВЫЙ ПРОМПТ ===
-    PERSONA = "Ты — Ячейка-тян, ироничный бот-помощник."
+    # === ПРОМПТ ===
+    PERSONA = "Ты — Ячейка-тян, бот-помощник."
 
-    if found_events_text:
-        SYSTEM_PROMPT = f"""{PERSONA}
+    if need_search:
+        if found_events_text:
+            system_instruction = f"""{PERSONA}
+РЕЖИМ: АНАЛИЗ ИВЕНТОВ.
 
-КОНТЕКСТ (Найденные анонсы):
 {found_events_text}
-
 {shikimori_info}
 
 ИНСТРУКЦИЯ:
-1. Ответь пользователю на вопрос, используя информацию из анонсов.
-2. Если есть данные из Shikimori, органично вплети их (например: "Кстати, рейтинг у него 8.5...").
-3. Если спрашивают "Где?", указывай локацию точно.
-4. Не выдумывай.
+1. Используй посты из ветки анонсов, чтобы ответить, куда сходить.
+2. Обращай внимание на даты.
+3. Если есть инфа с Shikimori, добавь её.
 """
+        else:
+            system_instruction = f"{PERSONA}\nЯ посмотрела ветку анонсов, но там пусто или нет свежего."
     else:
-        SYSTEM_PROMPT = f"""{PERSONA}
-В базе нет свежих анонсов (я проверила последние 100 сообщений с ключевыми словами).
-Ответь: "Пока тихо, свежих анонсов не вижу. Чекайте закреп или спросите админов."
-"""
+        system_instruction = f"{PERSONA}\nОбычный диалог. Отвечай кратко и иронично."
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": system_instruction}]
 
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
         messages.append({"role": role, "content": clean_response(row['content'])})
 
     user_content = [{"type": "text", "text": current_message}]
-    if image_data:
-        # (Код картинки как раньше)
-        pass 
+    if image_data: pass 
 
     messages.append({"role": "user", "content": user_content})
 
@@ -132,8 +120,7 @@ async def generate_response(db, chat_id, current_message, image_data=None):
                 model=model_cfg["name"],
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1000,
-                extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
+                max_tokens=800 if need_search else 250, # Экономим
             )
             if response.choices:
                 return clean_response(response.choices[0].message.content)
