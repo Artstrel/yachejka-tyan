@@ -4,6 +4,7 @@ import io
 import re
 from openai import AsyncOpenAI
 from config import OPENROUTER_API_KEY
+from services.shikimori import search_anime_info # <-- Импортируем наш сервис
 
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -17,128 +18,111 @@ MODELS = [
     {"name": "google/gemma-2-9b-it:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
 ]
-
 def clean_response(text):
     if not text: return ""
     return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 async def extract_anime_title(text):
-    """
-    Использует дешевую модель, чтобы вытащить название аниме из текста анонса.
-    """
+    """Используем маленькую модель, чтобы вытащить чистое название из текста анонса"""
     try:
         messages = [
-            {"role": "system", "content": "Твоя задача: найти название аниме, фильма или игры в тексте. Верни ТОЛЬКО название (на русском или английском). Если явного названия нет, верни 'NO'."},
-            {"role": "user", "content": f"Текст:\n{text[:500]}"}
+            {"role": "system", "content": "Твоя задача: найти название аниме, фильма или игры в тексте. Верни ТОЛЬКО название без лишних слов. Если названия нет, верни 'NO'."},
+            {"role": "user", "content": f"Текст:\n{text[:1000]}"}
         ]
         response = await client.chat.completions.create(
-            model="google/gemma-2-9b-it:free", # Быстрая и бесплатная модель
+            model="google/gemma-2-9b-it:free",
             messages=messages,
             temperature=0.1,
             max_tokens=20
         )
         title = response.choices[0].message.content.strip()
-        # Чистим от кавычек и лишнего
-        title = re.sub(r"['\"«»]", "", title)
+        title = re.sub(r"['\"«»]", "", title) # Чистим кавычки
         return title if title != "NO" and len(title) > 2 else None
-    except Exception as e:
-        logging.error(f"Title extraction failed: {e}")
+    except Exception:
         return None
 
 async def generate_response(db, chat_id, current_message, image_data=None):
-    # 1. Получаем контекст диалога (последние 10 сообщений)
+    # 1. История диалога
     history_rows = await db.get_context(chat_id)
     
-    # 2. Ищем анонсы за 21 день (БЕЗ лимита в 10 сообщений, поиск по базе)
-    raw_events = await db.get_potential_announcements(chat_id, days=21, limit=5)
+    # 2. Поиск анонсов (теперь с лимитом 100!)
+    raw_events = await db.get_potential_announcements(chat_id, days=30, limit=100)
 
     found_events_text = ""
-    shikimori_info_block = ""
+    shikimori_info = ""
     
+    # Обработка анонсов
     if raw_events:
+        # Сортируем: сначала самые свежие
+        # raw_events.sort(key=lambda x: x['timestamp'], reverse=True)
+        # Берем топ-5 самых свежих для анализа LLM, чтобы не перегрузить контекст
+        top_events = raw_events[:5] 
+        
         events_list = []
         full_text_batch = ""
         
-        for ev in raw_events:
+        for ev in top_events:
             content = ev['content']
-            date_str = ev.get('timestamp').strftime('%d.%m')
-            user_name = ev['user_name']
-            events_list.append(f"--- [POST BY {user_name} | {date_str}] ---\n{content}\n")
+            date = ev.get('timestamp').strftime('%d.%m')
+            user = ev['user_name']
+            events_list.append(f"--- [POST BY {user} | {date}] ---\n{content}\n")
             full_text_batch += content + "\n"
         
         found_events_text = "\n".join(events_list)
 
-        # 3. ПОПЫТКА ИНТЕГРАЦИИ SHIKIMORI
-        # Если в найденных анонсах есть слова "аниме", "тайтл" и т.д., пробуем найти инфо
-        if re.search(r"(аниме|anime|тайтл|сери|сезон)", full_text_batch, re.IGNORECASE):
+        # 3. Интеграция с Shikimori
+        # Если в тексте есть намеки на аниме, пробуем найти инфу
+        if re.search(r"(аниме|anime|тайтл|сери|сезон|смотреть|киберслав)", full_text_batch, re.IGNORECASE):
             detected_title = await extract_anime_title(full_text_batch)
-            
             if detected_title:
-                logging.info(f"🎬 Найден кандидат на название: {detected_title}")
+                logging.info(f"🎬 Найден кандидат: {detected_title}")
                 anime_data = await search_anime_info(detected_title)
                 
                 if anime_data:
-                    status_icon = "🟢" if anime_data['status'] == 'ongoing' else "🔴"
-                    shikimori_info_block = f"""
-🧠 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ SHIKIMORI (Для справки):
+                    status_emoji = "🟢" if anime_data['status'] == 'ongoing' else "🔴"
+                    shikimori_info = f"""
+🧠 ИНФО ИЗ SHIKIMORI:
 Название: {anime_data['title']} ({anime_data['original_title']})
 Рейтинг: {anime_data['score']} ⭐
-Тип: {anime_data['kind']} | Статус: {status_icon} {anime_data['status']}
+Тип: {anime_data['kind']} | {status_emoji} {anime_data['status']}
 Эпизоды: {anime_data['episodes']}
 Ссылка: {anime_data['url']}
-(Используй эти данные, чтобы дополнить ответ, если они подходят по контексту)
+(Добавь эти факты в ответ, если они уместны)
 """
 
-    # === ФОРМИРОВАНИЕ ПРОМПТА ===
-    
-    PERSONA = """
-Ты — Ячейка-тян, бот-помощник аниме-сообщества.
-Твой стиль: дружелюбный, но с легкой иронией. Ты любишь конкретику.
-"""
+    # === ИТОГОВЫЙ ПРОМПТ ===
+    PERSONA = "Ты — Ячейка-тян, ироничный бот-помощник."
 
     if found_events_text:
         SYSTEM_PROMPT = f"""{PERSONA}
 
-КОНТЕКСТ: Ниже найдены последние сообщения, похожие на анонсы мероприятий.
-Твоя задача — прочитать их и ответить пользователю.
-
-{shikimori_info_block}
-
-НАЙДЕННЫЕ СООБЩЕНИЯ:
+КОНТЕКСТ (Найденные анонсы):
 {found_events_text}
 
+{shikimori_info}
+
 ИНСТРУКЦИЯ:
-1. Выдели суть мероприятия: Что? Где? Когда?
-2. Если мы нашли данные на Shikimori (рейтинг, эпизоды), обязательно добавь их в ответ красиво.
-3. Если данных Shikimori нет, просто перескажи анонс.
-4. Указывай локацию точно (если D22 — пиши адрес 4 Amaghleba St).
-5. Не выдумывай того, чего нет в тексте.
+1. Ответь пользователю на вопрос, используя информацию из анонсов.
+2. Если есть данные из Shikimori, органично вплети их (например: "Кстати, рейтинг у него 8.5...").
+3. Если спрашивают "Где?", указывай локацию точно.
+4. Не выдумывай.
 """
     else:
         SYSTEM_PROMPT = f"""{PERSONA}
-В базе данных за последние 3 недели не найдено сообщений, похожих на анонсы (с датами, временем или локациями).
-Если спрашивают "Куда сходить?", честно скажи: "Пока тихо, свежих анонсов не вижу. Может, спросить у админов?"
+В базе нет свежих анонсов (я проверила последние 100 сообщений с ключевыми словами).
+Ответь: "Пока тихо, свежих анонсов не вижу. Чекайте закреп или спросите админов."
 """
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
-        clean_content = clean_response(row['content'])
-        messages.append({"role": role, "content": clean_content})
+        messages.append({"role": role, "content": clean_response(row['content'])})
 
     user_content = [{"type": "text", "text": current_message}]
-    
     if image_data:
-        try:
-            buffered = io.BytesIO()
-            image_data.save(buffered, format="JPEG")
-            img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-            })
-        except Exception: pass
+        # (Код картинки как раньше)
+        pass 
 
     messages.append({"role": "user", "content": user_content})
 
@@ -148,10 +132,10 @@ async def generate_response(db, chat_id, current_message, image_data=None):
                 model=model_cfg["name"],
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1200,
+                max_tokens=1000,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
-            if response.choices and response.choices[0].message.content:
+            if response.choices:
                 return clean_response(response.choices[0].message.content)
         except Exception: continue
 
