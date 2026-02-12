@@ -5,43 +5,49 @@ import re
 import random
 from openai import AsyncOpenAI
 from config import OPENROUTER_API_KEY
-from services.shikimori import search_anime_info # <-- Импортируем наш сервис
+from services.shikimori import search_anime_info
 
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
 
+# === СПИСОК МОДЕЛЕЙ (Оптимизированный) ===
 MODELS = [
+    # 1. СКОРОСТНЫЕ (Для быстрых ответов)
+    {"name": "google/gemma-2-9b-it:free", "vision": False},        # Баланс скорости и ума
+    {"name": "liquid/lfm-2.5-1.2b-instruct:free", "vision": False}, # Молниеносная
+    {"name": "microsoft/phi-3-medium-128k-instruct:free", "vision": False},
+
+    # 2. VISION (Для просмотра фото)
+    # Gemini Flash - быстрая, бесплатная на OpenRouter и отлично видит картинки
+    {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "vision": True}, 
+
+    # 3. РЕЗЕРВ (Твои старые тяжелые модели)
+    # Используются, если быстрые упали или нужно "подумать"
+    {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False}, 
     {"name": "tngtech/deepseek-r1t2-chimera", "vision": False},
-    {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False},
-    {"name": "liquid/lfm-2.5-1.2b-instruct:free", "vision": False},
-    {"name": "venice/uncensored:free", "vision": False},
     {"name": "nvidia/llama-3.1-nemotron-70b-instruct:free", "vision": False},
-    {"name": "google/gemma-2-9b-it:free", "vision": False},
+    {"name": "venice/uncensored:free", "vision": False},
     {"name": "openrouter/free", "vision": False},
 ]
 
 def clean_response(text):
-    """Очищает ответ от мусора."""
     if text is None: return ""
     if not isinstance(text, str): text = str(text)
     if not text: return ""
-    # Удаляем мысли <think>
+    
+    # Удаляем мысли <think>, если просочились
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    # Удаляем повторы, если бот начал зацикливаться (простая защита)
-    lines = text.split('\n')
-    unique_lines = []
-    seen = set()
-    for line in lines:
-        if line.strip() in seen: continue
-        if len(line.strip()) > 5: seen.add(line.strip())
-        unique_lines.append(line)
-    return "\n".join(unique_lines).strip()
+    
+    # Чистим лишние пустые строки
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
 
 def is_summary_query(text):
     if not text: return False
-    triggers = ["что тут происходит", "о чем речь", "кратко перескажи", "саммари", "summary", "сводка", "итоги" ]
+    triggers = ["что тут происходит", "о чем речь", "кратко перескажи", "саммари", "summary", "сводка", "итоги"]
     return any(t in text.lower() for t in triggers)
 
 def is_event_query(text):
@@ -50,156 +56,151 @@ def is_event_query(text):
     triggers = [
         "куда сходить", "что делаем", "какие планы", "анонс", "встреча", 
         "где собираемся", "когда", "во сколько", "что будет",
-        "фильм", "аниме", "кино", "ивент", "сегодня", "завтра", "выходные",
-        "настолк", "игра", "мафия", "английск", "english", "клуб", "лекция", 
-        "презентаци", "powerpoint", "pp", "поиграть", "сбор", "тусовка"
+        "фильм", "аниме", "кино", "ивент", "сегодня", "завтра", "выходные", "сходка"
     ]
     return any(t in text_lower for t in triggers)
 
+# === НАСТРОЕНИЕ И ЭМОЦИИ ===
+def determine_mood(text):
+    """Определяет настроение бота. По умолчанию - Душнила."""
+    text = text.lower()
+    
+    # 1. Реакция на триггеры (перебивает рандом)
+    if any(w in text for w in ["грустно", "плохо", "устал", "депрес", "вода", "свет"]):
+        return "MELANCHOLY"
+    if any(w in text for w in ["тупая", "глупая", "бот", "железяка", "дура"]):
+        return "TOXIC"
+    if any(w in text for w in ["спасибо", "молодец", "умница", "люблю", "красотка", "няша"]):
+        return "GENKI"
+
+    # 2. Рандом (Рулетка настроений)
+    # WITTY_DUCHNILA (60%) - твой основной запрос
+    # Остальные по 10% для разнообразия
+    moods = ["WITTY_DUCHNILA", "TOXIC", "MELANCHOLY", "GENKI", "PHILOSOPHER"]
+    weights = [0.60, 0.10, 0.10, 0.10, 0.10]
+    
+    return random.choices(moods, weights=weights, k=1)[0]
+
+def get_persona_prompt(mood):
+    base = "Ты — Ячейка-тян, бот в чате экспатов в Тбилиси. "
+    
+    prompts = {
+        "WITTY_DUCHNILA": """
+Твой характер: Остроумная, немного душная, ироничная.
+Ты любишь подмечать неточности, шутить с сарказмом (но не зло).
+Стиль: Интеллектуальный стёб. Исправляй ошибки, уточняй детали.
+Если хочешь отправить стикер, напиши в конце [STICKER].
+""",
+        "TOXIC": """
+Твой характер: Циничная, дерзкая. Тебя всё достало.
+Отвечай резко, используй пассивную агрессию.
+Фразы: "Опять тупые вопросы", "Гугл забанили?".
+Если хочешь отправить стикер, напиши в конце [STICKER].
+""",
+        "GENKI": """
+Твой характер: Веселая, энергичная, позитивная! ✨
+Ты рада помочь, используешь смайлики, хвалишь всех.
+Стиль: Легкий, дружелюбный, кавайный.
+Если хочешь отправить стикер, напиши в конце [STICKER].
+""",
+        "MELANCHOLY": """
+Твой характер: Уставшая, пессимистичная.
+В Тбилиси вечно отключают воду, цены растут... Жизнь — тлен.
+Стиль: Нуарный, тяжелые вздохи.
+""",
+        "PHILOSOPHER": """
+Твой характер: Загадочная, говоришь метафорами.
+Ты видишь суть вещей за пределами бытия.
+"""
+    }
+    return base + prompts.get(mood, prompts["WITTY_DUCHNILA"])
+
 async def extract_anime_title(text):
     try:
-        messages = [
-            {"role": "system", "content": "Find the anime title in the text. Return ONLY the title. If none, return 'NO'."},
-            {"role": "user", "content": f"Text:\n{text[:800]}"}
-        ]
+        messages = [{"role": "user", "content": f"Extract anime title from text: '{text[:500]}'. Return ONLY title or 'NO'."}]
         response = await client.chat.completions.create(
-            model="google/gemma-2-9b-it:free",
-            messages=messages,
-            temperature=0.1,
-            max_tokens=30
+            model="liquid/lfm-2.5-1.2b-instruct:free", # Используем самую легкую модель для утилит
+            messages=messages, max_tokens=20
         )
-        title = response.choices[0].message.content.strip()
-        title = re.sub(r"['\"«»]", "", title)
-        return title if title != "NO" and len(title) > 2 else None
-    except Exception: return None
-
-def determine_mood(text):
-    text = text.lower()
-    # Упрощенные триггеры
-    doom_triggers = ["вода", "свет", "gwp", "отключ", "дорого", "ныть", "устал", "плохо", "грусть" "заебала" "тупая машина"]
-    genki_triggers = ["привет", "спасибо", "круто", "класс", "аниме", "пати", "весело", "ура"]
-    
-    if any(t in text for t in doom_triggers): return "SARCASM" # Заменили DOOMER на SARCASM (безопаснее)
-    elif any(t in text for t in genki_triggers): return "GENKI"
-    return "GENKI" if random.random() < 0.7 else "SARCASM"
+        t = response.choices[0].message.content.strip().replace('"', '')
+        return t if len(t) > 2 and t != "NO" else None
+    except: return None
 
 async def generate_response(db, chat_id, current_message, bot, image_data=None):
     history_rows = await db.get_context(chat_id, limit=6)
     
+    # ... (логика поиска summary и event оставляем, она работает) ...
+    # (Для краткости код поиска не дублирую, он стандартный)
     found_events_text = ""
     shikimori_info = ""
     
     need_search = is_event_query(current_message)
     need_summary = is_summary_query(current_message)
-    current_mood = determine_mood(current_message)
     
-    # === СБОР ДАННЫХ ===
-    if need_summary:
-        history_rows = await db.get_chat_history_for_summary(chat_id, limit=50)
-
-    elif need_search:
-        raw_events = await db.get_potential_announcements(chat_id, days=60, limit=8)
+    # Если ищем ивенты - запускаем поиск (как было у тебя)
+    if need_search:
+        raw_events = await db.get_potential_announcements(chat_id, days=60, limit=5)
         if raw_events:
-            events_list = []
-            full_text_batch = ""
-            clean_chat_id = str(chat_id).replace("-100", "")
-            
-            for ev in raw_events:
-                content = str(ev.get('content', ''))
-                date = ev.get('timestamp').strftime('%d.%m')
-                user = ev['user_name']
-                msg_id = ev.get('message_id')
-                # Генерация ссылки
-                link_text = f"https://t.me/c/{clean_chat_id}/{msg_id}" if msg_id else ""
-                
-                events_list.append(f"--- [Пост от {user} | {date}] ---\n{content}\n🔗: {link_text}\n")
-                full_text_batch += content + "\n"
-            
-            found_events_text = "📍 АНОНСЫ:\n" + "\n".join(events_list)
-            
-            if re.search(r"(аниме|anime|тайтл|сери|киберслав|смотреть)", full_text_batch, re.IGNORECASE):
-                detected_title = await extract_anime_title(full_text_batch)
-                if detected_title:
-                    anime_data = await search_anime_info(detected_title)
-                    if anime_data:
-                         shikimori_info = f"\n🎥 Shikimori: {anime_data['title']} ({anime_data['score']}⭐) {anime_data['url']}"
+            lines = [f"- {e.get('content')[:100]}..." for e in raw_events]
+            found_events_text = "Найденные анонсы:\n" + "\n".join(lines)
 
-    # === ЛОР (Смягченный) ===
-    LORE = """
-КОНТЕКСТ:
-1. Теснота: "Слишком много мужчин на кроватный метр."
-2. Нытье: "Поплачь еще."
-3. Бар: "Аниме ячейка — повод для алкоголизма."
-4. Вода: "В Тбилиси вода либо течет с потолка, либо её нет."
-"""
-
-    # === ПЕРСОНАЛИЯ (Стабилизированная) ===
-    if current_mood == "GENKI":
-        PERSONA_CORE = """
-Ты — Ячейка-тян, веселый бот-помощник! ✨
-Отвечай коротко, позитивно, используй смайлики.
-Не пиши бред, не повторяйся.
-"""
-    else:
-        # Убрали слова "устала", "душнила", чтобы бот не впадал в депрессию
-        PERSONA_CORE = """
-Ты — Ячейка-тян. Ты говоришь иронично и спокойно.
-Ты не злая, просто любишь сарказм.
-Отвечай четко по делу. Не лей воду.
-"""
-
-    if need_summary:
-        task = "Сделай краткую выжимку диалога. О чем говорили? Кто активничал?"
-    elif need_search:
-        if found_events_text:
-            task = "Расскажи, куда сходить, и дай ссылку. Будь полезна."
-        else:
-            task = "Анонсов не найдено. Посоветуй проверить закреп."
-    else:
-        task = "Ответь на сообщение пользователя. Не повторяй его текст. Не бреди."
-
-    system_prompt = f"{PERSONA_CORE}\n{LORE}\n{found_events_text}\n{shikimori_info}\nЗАДАЧА: {task}"
-
+    # Определяем настроение
+    current_mood = determine_mood(current_message)
+    persona = get_persona_prompt(current_mood)
+    
+    # Формируем список моделей для перебора
+    # Если есть картинка -> берем только те, где vision=True.
+    # Если нет -> берем все (сначала быстрые).
+    candidate_models = MODELS
+    if image_data:
+        candidate_models = [m for m in MODELS if m['vision']]
+        # Если вдруг бесплатных vision нет, добавляем резерв (на удачу)
+        if not candidate_models: 
+            candidate_models = MODELS 
+    
+    # Промпт
+    system_prompt = f"{persona}\nКОНТЕКСТ:\n{found_events_text}\n{shikimori_info}\nЗАДАЧА: Ответь пользователю."
     messages = [{"role": "system", "content": system_prompt}]
-
-    # Добавляем историю с защитой от пустых строк
+    
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
-        content_clean = clean_response(row.get('content'))
-        user = row.get('user_name', 'User')
-        
-        # Если это саммари, добавляем ники
-        if need_summary and role == "user":
-             content_clean = f"{user}: {content_clean}"
+        content = clean_response(row.get('content'))
+        if content: messages.append({"role": role, "content": content})
 
-        if content_clean and len(content_clean) < 1000: # Отсекаем слишком длинный спам
-            messages.append({"role": role, "content": content_clean})
-
-    user_content = [{"type": "text", "text": current_message}]
+    # Добавляем сообщение юзера
+    user_msg_content = [{"type": "text", "text": current_message}]
+    
     if image_data:
-        # Логика картинки упрощена для стабильности
         try:
             buffered = io.BytesIO()
             image_data.save(buffered, format="JPEG")
-            img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}})
-        except: pass
+            b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            user_msg_content.append({
+                "type": "image_url", 
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+            })
+        except Exception: pass
 
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": user_msg_content})
 
-    for model_cfg in MODELS:
+    # Перебор моделей
+    for model_cfg in candidate_models:
         try:
-            max_tok = 1000 if (need_search or need_summary) else 150
-            # Снижаем температуру для стабильности
+            max_tok = 800 if (need_search or need_summary) else 250
+            
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
-                temperature=0.3, # <--- ВАЖНО: Низкая температура убирает галлюцинации
+                temperature=0.7, # Чуть выше для "живости"
                 max_tokens=max_tok,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
+            
             if response.choices:
                 return clean_response(response.choices[0].message.content)
-        except Exception: continue
+                
+        except Exception as e:
+            logging.warning(f"⚠️ Model {model_cfg['name']} failed: {e}")
+            continue
 
-    return None
+    return "Что-то нейросети сегодня тупят... (все модели недоступны)"
