@@ -58,8 +58,8 @@ GLOBAL_INSTRUCTIONS = """
    - Пиши просто, жестко, как пишут люди в чате.
 3. РЕАКЦИИ И СТИКЕРЫ:
    - Если сообщение вызывает эмоцию — добавь в конец [REACT:emoji].
-   - Если хочешь отправить стикер (мем) — добавь в конец [STICKER].
-   - Не лепи эмодзи в каждое предложение. Текст должен быть "сухим".
+   - Если хочешь отправить стикер (мем) — добавь в конец [STICKER]. 
+   - Не стесняйся кидать стикеры, если это смешно или в тему.
 4. ПАМЯТЬ: Используй факты о юзере, ТОЛЬКО если они прямо относятся к теме разговора. Не вставляй их без причины.
 """
 
@@ -127,14 +127,15 @@ def get_persona_prompt(mood, memory_text=""):
         "MELANCHOLY": "Характер: Пессимистичная. Всё тлен.",
         "PHILOSOPHER": "Характер: Загадочная. Краткие мысли."
     }
-    # Добавляем инструкцию к памяти, чтобы не использовала её агрессивно
     memory_block = f"\nФАКТЫ О ЮЗЕРЕ (Использовать только если в тему):\n{memory_text}\n" if memory_text else ""
     return JAILBREAK_INSTRUCTIONS + "\n" + TBILISI_LORE + "\n" + base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + memory_block + "\n" + GLOBAL_INSTRUCTIONS
 
-async def generate_response(db, chat_id, current_message, bot, image_data=None, user_id=None):
-    # Увеличили лимит для саммари до 500
+# ОБНОВЛЕНО: Принимаем thread_id
+async def generate_response(db, chat_id, thread_id, current_message, bot, image_data=None, user_id=None):
     limit_history = 500 if is_summary_query(current_message) else 15
-    history_rows = await db.get_context(chat_id, limit=limit_history)
+    
+    # ОБНОВЛЕНО: Передаем thread_id в get_context
+    history_rows = await db.get_context(chat_id, thread_id, limit=limit_history)
     
     memory_text = ""
     if user_id:
@@ -153,12 +154,15 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
     current_mood = determine_mood(current_message)
     persona = get_persona_prompt(current_mood, memory_text)
     
-    # Задача: быть лаконичным
     task_instruction = "Ответь КРАТКО (1-2 предложения). Если эмоция сильная — добавь [REACT:emoji]."
     
     if is_summary_query(current_message):
-        # Обновили инструкцию для саммари
-        task_instruction = f"ТВОЯ ЗАДАЧА: Прочитай последние {limit_history} сообщений. Напиши ОЧЕНЬ КРАТКУЮ выжимку (суть переписки) в 2-3 предложениях. Будь язвительна."
+        # ОБНОВЛЕНО: Жесткое ограничение на длину саммари
+        task_instruction = (
+            f"ТВОЯ ЗАДАЧА: Прочитай последние {limit_history} сообщений ИЗ ЭТОЙ ВЕТКИ (топика). "
+            "Напиши ПРЕДЕЛЬНО КРАТКИЙ итог обсуждения (максимум 3-4 предложения или короткий список). "
+            "НЕ ПИШИ ПОЛОТНО ТЕКСТА. Только суть и язвительные комментарии."
+        )
     elif is_event_query(current_message):
         if found_events_text:
             task_instruction = f"ТВОЯ ЗАДАЧА: Подскажи куда сходить (кратко), основываясь на анонсах:\n{found_events_text}"
@@ -200,7 +204,6 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
 
     for model_cfg in priority_queue:
         try:
-            # Увеличили токены для саммари, чтобы влезло 500 сообщений в контекст
             max_tok = 2000 if (is_event_query(current_message) or is_summary_query(current_message)) else 300 
             
             response = await client.chat.completions.create(
