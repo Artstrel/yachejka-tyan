@@ -102,48 +102,59 @@ async def main_handler(message: types.Message):
 
     if not ai_reply: return
 
-    # === ОБРАБОТКА ТЕГОВ ===
+    # === ОБРАБОТКА РЕАКЦИЙ И ТЕГОВ ===
     
-    # 1. Реакции [REACT:🔥]
+    # 1. Извлекаем явную реакцию [REACT:emoji]
+    explicit_reaction = None
     reaction_match = re.search(r"\[REACT:(.+?)\]", ai_reply)
     if reaction_match:
-        emoji = reaction_match.group(1).strip()
+        explicit_reaction = reaction_match.group(1).strip()
         ai_reply = ai_reply.replace(reaction_match.group(0), "")
-        try:
-            # Ставим реакцию на сообщение юзера
-            await bot.set_message_reaction(
-                chat_id=chat_id,
-                message_id=message.message_id,
-                reaction=[ReactionTypeEmoji(emoji=emoji)]
-            )
-        except Exception: 
-            pass # Если эмодзи невалидный или запрещен в чате, просто игнорим
 
-    # 2. Стикеры [STICKER]
+    # 2. Извлекаем стикер [STICKER]
     send_sticker_flag = False
     if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-    # 3. Очистка мусора
+    # 3. Чистка мусора
     ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
     ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
     ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
 
     try:
+        # Отправляем текст ответа
         if ai_reply:
             sent = await message.reply(ai_reply)
             if config.DATABASE_URL:
                 await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, message.message_thread_id)
         
-        # Шанс стикера повышен до 8%
+        # === ЛОГИКА РЕАКЦИЙ ===
+        # Приоритет: Явный выбор нейросети -> Иначе случайный (5%)
+        reaction_to_set = explicit_reaction
+        
+        if not reaction_to_set and random.random() < 0.15:
+            # Набор безопасных реакций для рандома
+            safe_reactions = ['👍', '❤', '🔥', '👏', '😁', '🤔', '😱', '🎉', '👀']
+            reaction_to_set = random.choice(safe_reactions)
+            
+        if reaction_to_set:
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                reaction=[ReactionTypeEmoji(emoji=reaction_to_set)]
+            )
+
+        # === ЛОГИКА СТИКЕРОВ ===
+        # Шанс 8% (как просили ранее) или явный приказ
         if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
                 await asyncio.sleep(1)
                 await bot.send_sticker(chat_id=chat_id, sticker=sid, message_thread_id=message.message_thread_id)
+
     except Exception as e:
-        logging.error(f"Send error: {e}")
+        logging.error(f"Interaction error: {e}")
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
