@@ -16,13 +16,13 @@ except Exception:
     pass
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode, ChatAction, ReactionTypeEmoji
+from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand
+# ИСПРАВЛЕНИЕ: ReactionTypeEmoji берем из types, а не из enums
+from aiogram.types import BotCommand, ReactionTypeEmoji
 
 import config
 from database.db import Database
-# ВАЖНО: Добавили analyze_and_save_memory (фоновая память)
 from services.ai_engine import generate_response, is_event_query, is_summary_query, analyze_and_save_memory, get_available_models_text
 from keep_alive import start_server
 
@@ -44,20 +44,18 @@ BOT_INFO = None
 async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
     """
     Постоянно обновляет статус 'typing', пока задача не будет отменена.
-    Обязательно принимает thread_id, чтобы статус был виден в нужной ветке!
     """
     try:
         while True:
             await bot.send_chat_action(
                 chat_id=chat_id, 
                 action=ChatAction.TYPING, 
-                message_thread_id=thread_id  # <--- ВОТ ЭТО ЧИНИТ ОТОБРАЖЕНИЕ В ТЕМАХ
+                message_thread_id=thread_id
             )
             await asyncio.sleep(sleep_time)
     except asyncio.CancelledError:
-        pass # Задача отменена корректно
-    except Exception as e:
-        # Логируем тихо, чтобы не засорять консоль, если прав нет
+        pass 
+    except Exception:
         pass
 
 async def on_startup(dispatcher: Dispatcher):
@@ -100,7 +98,7 @@ async def main_handler(message: types.Message):
     if not BOT_INFO: return
 
     chat_id = message.chat.id
-    thread_id = message.message_thread_id # <--- ID ветки (темы)
+    thread_id = message.message_thread_id 
     msg_id = message.message_id
     user_id = message.from_user.id
     user_name = message.from_user.first_name if message.from_user else "Anon"
@@ -126,7 +124,6 @@ async def main_handler(message: types.Message):
     # Сохраняем сообщение и запускаем анализ памяти
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
-        # Запускаем анализ памяти в фоне
         asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
     if not should_answer:
@@ -145,14 +142,13 @@ async def main_handler(message: types.Message):
             if not text: text = "Что на этом фото?"
         except Exception: pass
 
-    # === ЗАПУСК ИНДИКАТОРА "ПЕЧАТАЕТ..." В НУЖНОЙ ВЕТКЕ ===
+    # === ЗАПУСК ИНДИКАТОРА "ПЕЧАТАЕТ..." ===
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
 
     try:
         # Генерация ответа
         ai_reply = await generate_response(db, chat_id, text, bot, image_data, user_id=user_id)
     finally:
-        # Обязательно останавливаем "печатает", когда получили ответ
         typing_task.cancel()
 
     if not ai_reply:
@@ -187,7 +183,6 @@ async def main_handler(message: types.Message):
                 asyncio.create_task(db.add_message(chat_id, sent_msg.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
 
         # === ЛОГИКА РЕАКЦИЙ ===
-        # Если нейросеть выбрала реакцию - ставим её. Если нет - шанс 5% на рандомную.
         reaction_to_set = explicit_reaction
         if not reaction_to_set and random.random() < 0.05:
              reaction_to_set = random.choice(['👍', '❤', '🔥', '👏', '😁', '🤔', '👀'])
@@ -196,13 +191,12 @@ async def main_handler(message: types.Message):
             try:
                 await bot.set_message_reaction(
                     chat_id=chat_id,
-                    message_id=msg_id, # Ставим реакцию на сообщение ЮЗЕРА
+                    message_id=msg_id, 
                     reaction=[ReactionTypeEmoji(emoji=reaction_to_set)]
                 )
             except Exception: pass
 
         # === ЛОГИКА СТИКЕРОВ ===
-        # Шанс 8% или явный приказ
         if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
             sticker_id = await db.get_random_sticker()
             if sticker_id:
