@@ -5,9 +5,9 @@ import socket
 import random
 import re
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode, ChatAction, ReactionTypeEmoji
+from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand, ReactionTypeEmoji
+from aiogram.types import BotCommand, ReactionTypeEmoji # <--- ТЕПЕРЬ ПРАВИЛЬНО
 import config
 from database.db import Database
 from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
@@ -131,13 +131,9 @@ async def main_handler(message: types.Message):
             if config.DATABASE_URL:
                 await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id)
         
-        # ЛОГИКА РЕАКЦИЙ (АНТИ-СПАМ)
-        # Если AI выбрал реакцию (explicit_reaction) -> Ставим её 100%.
-        # Если НЕ выбрал -> Ставим рандомную ТОЛЬКО с шансом 10% (0.1).
+        # Реакции
         reaction_to_set = explicit_reaction
-        
         if not reaction_to_set and random.random() < 0.10:
-             # Набор безопасных реакций (без '🤨')
              reaction_to_set = random.choice(['👍', '❤', '🔥', '👏', '😁', '👀', '🤔'])
 
         if reaction_to_set:
@@ -149,7 +145,7 @@ async def main_handler(message: types.Message):
                 )
             except Exception: pass
 
-        # Стикеры (8%)
+        # Стикеры
         if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
