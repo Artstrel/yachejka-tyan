@@ -7,7 +7,7 @@ import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand, ReactionTypeEmoji # <--- ТЕПЕРЬ ПРАВИЛЬНО
+from aiogram.types import BotCommand, ReactionTypeEmoji
 import config
 from database.db import Database
 from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
@@ -108,19 +108,24 @@ async def main_handler(message: types.Message):
 
     if not ai_reply: return
 
-    # === ОБРАБОТКА ТЕГОВ ===
+    # === УЛУЧШЕННАЯ ОБРАБОТКА ТЕГОВ ===
+    
+    # 1. Ловим реакцию с любыми скобками или без: [REACT:🔥], REACT:🔥
     explicit_reaction = None
-    reaction_match = re.search(r"\[REACT:(.+?)\]", ai_reply)
+    # Regex: \[? - возможная скобка, REACT: - текст, [\s]* - пробелы, ([^\s\]]+) - сам смайл, \]? - скобка
+    reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
     if reaction_match:
         explicit_reaction = reaction_match.group(1).strip()
+        # Вырезаем ВЕСЬ найденный кусок
         ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
+    # 2. Ловим стикер
     send_sticker_flag = False
     if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-    # Чистка
+    # 3. Чистка
     ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
     ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
     ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
@@ -133,9 +138,7 @@ async def main_handler(message: types.Message):
         
         # Реакции
         reaction_to_set = explicit_reaction
-        if not reaction_to_set and random.random() < 0.10:
-             reaction_to_set = random.choice(['👍', '❤', '🔥', '👏', '😁', '👀', '🤔'])
-
+        
         if reaction_to_set:
             try:
                 await bot.set_message_reaction(
@@ -145,7 +148,7 @@ async def main_handler(message: types.Message):
                 )
             except Exception: pass
 
-        # Стикеры
+        # Стикеры (8%)
         if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
