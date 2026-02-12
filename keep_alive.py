@@ -1,18 +1,22 @@
-from flask import Flask
-from threading import Thread
-import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "I am alive!", 200
-
-def run():
-    # Render передает порт в переменную PORT. Если её нет, берем 10000 (стандарт Render)
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass  # Отключаем логи
 
 def start_server():
-    t = Thread(target=run)
-    t.start()
+    """Запускает минималистичный HTTP сервер для health check"""
+    server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
