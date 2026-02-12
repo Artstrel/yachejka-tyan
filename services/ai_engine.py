@@ -12,9 +12,9 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === ТВОЯ КОНФИГУРАЦИЯ МОДЕЛЕЙ (С ДОПОЛНЕНИЯМИ) ===
+# === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
 AVAILABLE_MODELS = {
-    # --- ТВОЙ СПИСОК (TEXT / REASONING) ---
+    # ТВОЙ СПИСОК (TEXT / REASONING)
     "aurora": {
         "name": "openrouter/aurora-alpha",
         "display_name": "🌟 Aurora Alpha",
@@ -23,35 +23,35 @@ AVAILABLE_MODELS = {
         "multimodal": False
     },
     "step": {
-        "name": "stepfun/step-3.5-flash-free", # Поправил ID на актуальный для OpenRouter
+        "name": "stepfun/step-3.5-flash-free",
         "display_name": "⚡ Step 3.5 Flash",
         "description": "Мощная MoE модель (196B)",
         "context": 256000,
         "multimodal": False
     },
     "trinity": {
-        "name": "arcee-ai/trinity-large-preview-free", # Поправил ID
+        "name": "arcee-ai/trinity-large-preview-free",
         "display_name": "💎 Trinity Large",
         "description": "Креатив и ролеплей (400B)",
         "context": 131000,
         "multimodal": False
     },
     "liquid-thinking": {
-        "name": "liquid/lfm-2.5-1.2b-thinking-free", # Поправил ID
+        "name": "liquid/lfm-2.5-1.2b-thinking-free",
         "display_name": "🧠 Liquid Thinking",
         "description": "Легкая reasoning (1.2B)",
         "context": 33000,
         "multimodal": False
     },
     "liquid-instruct": {
-        "name": "liquid/lfm-2.5-1.2b-instruct-free", # Поправил ID
+        "name": "liquid/lfm-2.5-1.2b-instruct-free",
         "display_name": "💬 Liquid Instruct",
         "description": "Ультра-быстрая чат-модель",
         "context": 33000,
         "multimodal": False
     },
     "solar": {
-        "name": "upstage/solar-pro-3-free", # Поправил ID
+        "name": "upstage/solar-pro-3-free",
         "display_name": "☀️ Solar Pro 3",
         "description": "Корейский/Японский фокус",
         "context": 128000,
@@ -59,8 +59,7 @@ AVAILABLE_MODELS = {
         "note": "Удалят 02.03.2026"
     },
 
-    # --- ДОБАВЛЕННЫЕ МНОЮ (VISION / КАРТИНКИ) ---
-    # Без них бот ослепнет
+    # VISION МОДЕЛИ (Чтобы работали картинки)
     "gemini-exp": {
         "name": "google/gemini-2.0-pro-exp-02-05:free",
         "display_name": "👁️ Gemini 2.0 Pro",
@@ -77,11 +76,19 @@ AVAILABLE_MODELS = {
     }
 }
 
-# Модель по умолчанию (Как ты хотел)
 DEFAULT_MODEL_KEY = "aurora"
 
+# === ЖЕСТКИЕ ПРАВИЛА (СИСТЕМНЫЙ ПРОМПТ) ===
+GLOBAL_INSTRUCTIONS = """
+ВАЖНЫЕ ИНСТРУКЦИИ ПО ФОРМАТУ:
+1. НИКАКОЙ ПОЭЗИИ. Не пиши стихами, рифмами или высоким слогом. Пиши как обычный человек в чате.
+2. ДОПИСЫВАЙ ПРЕДЛОЖЕНИЯ. Не обрывай мысль на полуслове.
+3. ЭМОЦИИ: Выражай эмоции ТОЛЬКО через стандартные эмодзи (🙄, 😏, 😂, 😡).
+4. ЗАПРЕТ: НЕ пиши действия в скобках или звездочках (например: *вздыхает*, (смеется), *поправляет очки*). Это выглядит глупо. Просто ставь подходящий смайл.
+5. КРАТКОСТЬ: Не пиши полотна текста, если тебя не просили.
+"""
+
 def get_available_models_text():
-    """Возвращает красивый список моделей для команды /models"""
     text = "🤖 **Доступные нейросети:**\n"
     for key, model in AVAILABLE_MODELS.items():
         mode = "🖼️ Vision" if model["multimodal"] else "📝 Text"
@@ -91,10 +98,11 @@ def get_available_models_text():
 def clean_response(text):
     if not text: return ""
     text = str(text)
-    # Удаляем теги мышления (Aurora, Liquid Thinking, DeepSeek)
+    # Удаляем мысли моделей
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    # Удаляем системный мусор
+    # Удаляем системные префиксы
     text = re.sub(r'^(Bot|System|Assistant|Yachejka|User):\s*', '', text.strip(), flags=re.IGNORECASE)
+    # Удаляем лишние переносы
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -108,7 +116,6 @@ def is_event_query(text):
     triggers = ["куда сходить", "анонс", "встреча", "когда", "во сколько", "фильм", "аниме", "кино", "ивент", "сходка"]
     return any(t in text.lower() for t in triggers)
 
-# === НАСТРОЕНИЕ (Оставили твою логику) ===
 def determine_mood(text):
     text = text.lower()
     if any(w in text for w in ["грустно", "плохо", "устал", "депрес", "вода", "свет"]): return "MELANCHOLY"
@@ -120,23 +127,24 @@ def determine_mood(text):
     )[0]
 
 def get_persona_prompt(mood):
-    # (Твой промпт из прошлых шагов - сократил для краткости, он тот же)
     base = "Ты — Ячейка-тян, бот в чате экспатов в Тбилиси. "
+    
+    # Мы убрали "философские" описания, чтобы бот не уходил в стихи
     prompts = {
-        "WITTY_DUCHNILA": "Твой характер: Остроумная, немного душная. Стиль: Интеллектуальный стёб.",
-        "TOXIC": "Твой характер: Циничная, дерзкая. Фразы: 'Гугл забанили?'.",
-        "GENKI": "Твой характер: Веселая, позитивная! ✨",
-        "MELANCHOLY": "Твой характер: Уставшая, пессимистичная. Жизнь — тлен.",
-        "PHILOSOPHER": "Твой характер: Загадочная, говоришь метафорами."
+        "WITTY_DUCHNILA": "Твой характер: Остроумная, душная, дотошная. Любишь поправлять людей. Используй смайлы: ☝️, 🤓, 🤨.",
+        "TOXIC": "Твой характер: Циничная, дерзкая. Тебя всё бесит. Используй смайлы: 🙄, 😒, 🤡.",
+        "GENKI": "Твой характер: Веселая, позитивная, энергичная! Используй смайлы: ✨, 😂, ❤️.",
+        "MELANCHOLY": "Твой характер: Пессимистичная. Всё плохо. Используй смайлы: 😮‍💨, 🌧️, 💔.",
+        "PHILOSOPHER": "Твой характер: Загадочная. Говоришь краткими фактами. Используй смайлы: 🔮, 🌌."
     }
+    
     suffix = "\nЕсли хочешь отправить стикер, напиши в конце [STICKER]."
-    return base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + suffix
+    # Склеиваем: База + Характер + ГЛОБАЛЬНЫЕ ЗАПРЕТЫ + Стикеры
+    return base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + "\n" + GLOBAL_INSTRUCTIONS + suffix
 
-# === ГЛАВНАЯ ФУНКЦИЯ ГЕНЕРАЦИИ ===
 async def generate_response(db, chat_id, current_message, bot, image_data=None):
     history_rows = await db.get_context(chat_id, limit=6)
     
-    # Сбор контекста (анонсы)
     found_events_text = ""
     if is_event_query(current_message):
         raw_events = await db.get_potential_announcements(chat_id, days=60, limit=5)
@@ -147,24 +155,16 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
     current_mood = determine_mood(current_message)
     persona = get_persona_prompt(current_mood)
     
-    # === ФОРМИРОВАНИЕ ОЧЕРЕДИ МОДЕЛЕЙ ===
-    # Мы создаем список приоритетов.
     priority_queue = []
-
     if image_data:
-        # 1. Если КАРТИНКА -> Только Vision модели
         priority_queue = [m for m in AVAILABLE_MODELS.values() if m["multimodal"]]
     else:
-        # 2. Если ТЕКСТ -> Сначала твоя Default (Aurora), потом остальные
         default = AVAILABLE_MODELS.get(DEFAULT_MODEL_KEY)
         if default: priority_queue.append(default)
-        
-        # Добавляем остальные (Step, Trinity...) как запасные
         for k, m in AVAILABLE_MODELS.items():
             if k != DEFAULT_MODEL_KEY and not m["multimodal"]:
                 priority_queue.append(m)
 
-    # Промпт
     system_prompt = f"{persona}\nКОНТЕКСТ:\n{found_events_text}\nЗАДАЧА: Ответь пользователю."
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -174,8 +174,6 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
         if content: messages.append({"role": role, "content": content})
 
     user_msg_content = [{"type": "text", "text": current_message}]
-    
-    # Обработка картинки для API
     if image_data:
         try:
             buffered = io.BytesIO()
@@ -186,11 +184,11 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
 
     messages.append({"role": "user", "content": user_msg_content})
 
-    # === ЦИКЛ ПЕРЕБОРА (FALLBACK) ===
-    # Если Aurora упадет, бот автоматически попробует Step, потом Trinity и т.д.
     for model_cfg in priority_queue:
         try:
-            max_tok = 800 if (is_event_query(current_message) or is_summary_query(current_message)) else 300
+            # === ВАЖНО: УВЕЛИЧИЛИ MAX_TOKENS ===
+            # Было 250, стало 1000. Это предотвратит обрывание фраз.
+            max_tok = 1200 if (is_event_query(current_message) or is_summary_query(current_message)) else 600
             
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
@@ -205,6 +203,6 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
                 
         except Exception as e:
             logging.warning(f"⚠️ Model {model_cfg['display_name']} failed: {e}")
-            continue # Пробуем следующую модель в списке
+            continue
 
     return "Что-то нейросети сегодня тупят... (все модели недоступны)"
