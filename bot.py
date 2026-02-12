@@ -19,7 +19,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 import config
 from database.db import Database
-# ИМПОРТИРУЕМ НОВУЮ ФУНКЦИЮ
 from services.ai_engine import generate_response, get_available_models_text
 from keep_alive import start_server
 
@@ -43,8 +42,6 @@ async def on_startup(dispatcher: Dispatcher):
     if config.DATABASE_URL: await db.connect()
     global BOT_INFO
     BOT_INFO = await bot.get_me()
-    
-    # ДОБАВИЛ КОМАНДУ /models
     await bot.set_my_commands([
         BotCommand(command="start", description="👋 Привет"),
         BotCommand(command="summary", description="📜 Сводка чата"),
@@ -55,7 +52,6 @@ async def on_startup(dispatcher: Dispatcher):
 
 dp.startup.register(on_startup)
 
-# === НОВЫЙ ХЕНДЛЕР ДЛЯ СПИСКА МОДЕЛЕЙ ===
 @dp.message(F.command("models"))
 async def models_handler(message: types.Message):
     text = get_available_models_text()
@@ -105,13 +101,22 @@ async def main_handler(message: types.Message):
 
     if not ai_reply: return
 
-    # Очистка и отправка
+    # === ОЧИСТКА ОТ МУСОРА И ДЕЙСТВИЙ ===
     send_sticker_flag = False
     sticker_pattern = r"(\[?STICKER\]?)"
     if re.search(sticker_pattern, ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(sticker_pattern, "", ai_reply, flags=re.IGNORECASE)
 
+    # 1. Удаляем действия в звездочках: *вздыхает* -> ""
+    ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
+    
+    # 2. Удаляем действия в скобках, если они в начале строки (частая проблема): (смеется) Привет -> Привет
+    # Но оставляем скобки, если они внутри предложения для уточнения (пример: "Я (наверное) пойду")
+    # Удаляем только если скобки идут отдельным блоком или в начале.
+    ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
+
+    # 3. Удаляем системные имена
     clean_regex = r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*"
     ai_reply = re.sub(clean_regex, "", ai_reply).strip()
 
