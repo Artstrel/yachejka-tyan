@@ -82,4 +82,46 @@ class Database:
         if self.db is None: return []
         try:
             since = datetime.datetime.utcnow() - datetime.timedelta(days=days)
-            cursor = self.db.
+            cursor = self.db.messages.find({
+                "chat_id": chat_id,
+                "timestamp": {"$gte": since},
+                "role": "user",
+                "$or": [
+                    {"content": {"$regex": "анонс", "$options": "i"}},
+                    {"content": {"$regex": "встреч", "$options": "i"}},
+                    {"content": {"$regex": "собираемся", "$options": "i"}},
+                    {"content": {"$regex": "сбор", "$options": "i"}}
+                ]
+            }).sort("timestamp", -1).limit(limit)
+            return await cursor.to_list(length=limit)
+        except Exception: return []
+
+    # --- MEMORY (FACTS) ---
+    async def add_fact(self, chat_id, user_id, user_name, fact_text):
+        if self.db is None: return
+        try:
+            fact = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "user_name": user_name,
+                "fact": fact_text,
+                "timestamp": datetime.datetime.utcnow()
+            }
+            await self.db.memory.insert_one(fact)
+            logging.info(f"💾 Memory saved: {user_name} -> {fact_text}")
+        except Exception as e:
+            logging.error(f"Memory Save Error: {e}")
+
+    async def get_relevant_facts(self, chat_id, user_id, limit=5):
+        if self.db is None: return []
+        try:
+            # 1. Факты об этом юзере
+            cursor_user = self.db.memory.find({"chat_id": chat_id, "user_id": user_id}).sort("timestamp", -1).limit(3)
+            user_facts = await cursor_user.to_list(length=3)
+            
+            # 2. Общие факты
+            cursor_global = self.db.memory.find({"chat_id": chat_id, "user_id": {"$ne": user_id}}).sort("timestamp", -1).limit(2)
+            global_facts = await cursor_global.to_list(length=2)
+            
+            return user_facts + global_facts
+        except Exception: return []
