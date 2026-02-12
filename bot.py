@@ -184,4 +184,43 @@ async def main_handler(message: types.Message):
             sent_msg = await message.reply(ai_reply)
             
             if config.DATABASE_URL:
-                asyncio.create_task(db.add_message(chat_id, sent_msg.message
+                asyncio.create_task(db.add_message(chat_id, sent_msg.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
+
+        # === ЛОГИКА РЕАКЦИЙ ===
+        # Если нейросеть выбрала реакцию - ставим её. Если нет - шанс 5% на рандомную.
+        reaction_to_set = explicit_reaction
+        if not reaction_to_set and random.random() < 0.05:
+             reaction_to_set = random.choice(['👍', '❤', '🔥', '👏', '😁', '🤔', '👀'])
+
+        if reaction_to_set:
+            try:
+                await bot.set_message_reaction(
+                    chat_id=chat_id,
+                    message_id=msg_id, # Ставим реакцию на сообщение ЮЗЕРА
+                    reaction=[ReactionTypeEmoji(emoji=reaction_to_set)]
+                )
+            except Exception: pass
+
+        # === ЛОГИКА СТИКЕРОВ ===
+        # Шанс 8% или явный приказ
+        if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
+            sticker_id = await db.get_random_sticker()
+            if sticker_id:
+                try:
+                    await asyncio.sleep(1)
+                    await bot.send_sticker(chat_id=chat_id, sticker=sticker_id, message_thread_id=thread_id)
+                except Exception: pass
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка отправки: {e}")
+
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("📡 Запуск Polling...")
+    await dp.start_polling(bot, allowed_updates=["message"])
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот выключен вручную")
