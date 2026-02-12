@@ -4,63 +4,92 @@ import sys
 import socket
 import random
 import re
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode, ChatAction
-from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand, ReactionTypeEmoji
-import config
-from database.db import Database
-from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
-from keep_alive import start_server
+import os
 
-# Fix IPv4
+# --- FIX IPv4 для Fly.io ---
 try:
     orig_getaddrinfo = socket.getaddrinfo
     def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
         return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
     socket.getaddrinfo = getaddrinfo_ipv4
-except Exception: pass
+except Exception:
+    pass
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode, ChatAction, ReactionTypeEmoji
+from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand
+
+import config
+from database.db import Database
+# ВАЖНО: Добавили analyze_and_save_memory (фоновая память)
+from services.ai_engine import generate_response, is_event_query, is_summary_query, analyze_and_save_memory, get_available_models_text
+from keep_alive import start_server
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout
+)
 
 dp = Dispatcher()
 db = Database(config.DATABASE_URL)
-bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+bot = Bot(
+    token=config.TELEGRAM_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+)
 BOT_INFO = None
 
-# === ИСПРАВЛЕННАЯ ФУНКЦИЯ keep_typing ===
+# === ФУНКЦИЯ ВЕЧНОГО СТАТУСА ПЕЧАТИ ===
 async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
-    """Отправляет статус 'печатает' в нужный чат и тред"""
+    """
+    Постоянно обновляет статус 'typing', пока задача не будет отменена.
+    Обязательно принимает thread_id, чтобы статус был виден в нужной ветке!
+    """
     try:
         while True:
-            # Важно передавать message_thread_id, иначе в темах не видно
             await bot.send_chat_action(
                 chat_id=chat_id, 
                 action=ChatAction.TYPING, 
-                message_thread_id=thread_id
+                message_thread_id=thread_id  # <--- ВОТ ЭТО ЧИНИТ ОТОБРАЖЕНИЕ В ТЕМАХ
             )
             await asyncio.sleep(sleep_time)
     except asyncio.CancelledError:
         pass # Задача отменена корректно
     except Exception as e:
-        # Логируем, если статус не отправляется (например, нет прав)
-        logging.warning(f"Typing status error: {e}")
+        # Логируем тихо, чтобы не засорять консоль, если прав нет
+        pass
 
 async def on_startup(dispatcher: Dispatcher):
-    logging.info("🚀 Запуск...")
-    if config.DATABASE_URL: await db.connect()
+    logging.info("🚀 Запуск процессов...")
+    if config.DATABASE_URL:
+        try:
+            await db.connect()
+            logging.info("✅ MongoDB подключена")
+        except Exception as e:
+            logging.error(f"❌ Ошибка подключения к БД: {e}")
+
     global BOT_INFO
     BOT_INFO = await bot.get_me()
-    await bot.set_my_commands([
-        BotCommand(command="start", description="👋 Привет"),
-        BotCommand(command="summary", description="📜 Сводка"),
+    logging.info(f"🤖 Авторизован как @{BOT_INFO.username}")
+    
+    commands = [
+        BotCommand(command="start", description="👋 Приветствие"),
+        BotCommand(command="summary", description="📜 Краткая сводка"),
         BotCommand(command="events", description="📅 Анонсы"),
         BotCommand(command="models", description="🤖 Модели"),
-    ])
+        BotCommand(command="help", description="❓ Помощь")
+    ]
+    await bot.set_my_commands(commands)
     start_server()
 
-dp.startup.register(on_startup)
+async def on_shutdown(dispatcher: Dispatcher):
+    logging.warning("🛑 Bot stopping...")
 
+dp.startup.register(on_startup)
+dp.shutdown.register(on_shutdown)
+
+# Хендлер для команды /models
 @dp.message(F.command("models"))
 async def models_handler(message: types.Message):
     text = get_available_models_text()
@@ -71,101 +100,88 @@ async def main_handler(message: types.Message):
     if not BOT_INFO: return
 
     chat_id = message.chat.id
+    thread_id = message.message_thread_id # <--- ID ветки (темы)
+    msg_id = message.message_id
     user_id = message.from_user.id
-    user_name = message.from_user.first_name
-    thread_id = message.message_thread_id # ID темы (треда)
+    user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
+    # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
 
+    # === ФИЛЬТРЫ ===
     is_mentioned = text and f"@{BOT_INFO.username}" in text
-    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
-    is_cmd = text.startswith("/")
-    chance = 0.15 
-
-    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < chance)
+    is_reply_to_me = message.reply_to_message and \
+                     message.reply_to_message.from_user.id == BOT_INFO.id
     
+    is_event = is_event_query(text)
+    is_summary = is_summary_query(text)
+    is_command = text.startswith("/")
+
+    chance = 0.15 
+    should_answer = is_command or is_mentioned or is_reply_to_me or is_event or is_summary or (random.random() < chance)
+
+    # Сохраняем сообщение и запускаем анализ памяти
     if config.DATABASE_URL:
-        await db.add_message(chat_id, message.message_id, user_id, 
-                             user_name, 'user', text, thread_id)
+        await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
+        # Запускаем анализ памяти в фоне
         asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
-    if not should_answer: return
+    if not should_answer:
+        return
 
+    # Фото
     image_data = None
     if message.photo:
         try:
-            f = await bot.get_file(message.photo[-1].file_id)
-            down = await bot.download_file(f.file_path)
+            photo = message.photo[-1]
+            file = await bot.get_file(photo.file_id)
+            downloaded = await bot.download_file(file.file_path)
             import io
             from PIL import Image
-            image_data = Image.open(io.BytesIO(down.read()))
+            image_data = Image.open(io.BytesIO(downloaded.read()))
             if not text: text = "Что на этом фото?"
-        except: pass
+        except Exception: pass
 
-    # === ЗАПУСК ИНДИКАТОРА ПЕЧАТИ (с thread_id) ===
+    # === ЗАПУСК ИНДИКАТОРА "ПЕЧАТАЕТ..." В НУЖНОЙ ВЕТКЕ ===
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
-    
+
     try:
+        # Генерация ответа
         ai_reply = await generate_response(db, chat_id, text, bot, image_data, user_id=user_id)
     finally:
+        # Обязательно останавливаем "печатает", когда получили ответ
         typing_task.cancel()
 
-    if not ai_reply: return
+    if not ai_reply:
+        return
 
-    # === ОБРАБОТКА ТЕГОВ ===
+    # === ОБРАБОТКА ТЕГОВ ИЗ ОТВЕТА ===
+    
+    # 1. Реакции [REACT:🔥]
     explicit_reaction = None
     reaction_match = re.search(r"\[REACT:(.+?)\]", ai_reply)
     if reaction_match:
         explicit_reaction = reaction_match.group(1).strip()
         ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
+    # 2. Стикеры [STICKER]
     send_sticker_flag = False
     if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-    # Чистка
+    # 3. Чистка мусора
     ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
     ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
     ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
 
     try:
+        # Отправляем текст
         if ai_reply:
-            sent = await message.reply(ai_reply)
-            if config.DATABASE_URL:
-                await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id)
-        
-        # Реакции
-        reaction_to_set = explicit_reaction
-        # Если бот не выбрал, с вероятностью 5% ставим рандом (но не 🤨)
-        if not reaction_to_set and random.random() < 0.05:
-            reaction_to_set = random.choice(['👍', '❤', '🔥', '👏', '😁', '🤔', '👀'])
+            sent_msg = await message.reply(ai_reply)
             
-        if reaction_to_set:
-            try:
-                await bot.set_message_reaction(
-                    chat_id=chat_id,
-                    message_id=message.message_id,
-                    reaction=[ReactionTypeEmoji(emoji=reaction_to_set)]
-                )
-            except Exception: pass # Игнорируем ошибки реакций
-
-        # Стикеры (8%)
-        if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
-            sid = await db.get_random_sticker()
-            if sid:
-                await asyncio.sleep(1)
-                await bot.send_sticker(chat_id=chat_id, sticker=sid, message_thread_id=thread_id)
-
-    except Exception as e:
-        logging.error(f"Interaction error: {e}")
-
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            if config.DATABASE_URL:
+                asyncio.create_task(db.add_message(chat_id, sent_msg.message
