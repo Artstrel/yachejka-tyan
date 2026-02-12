@@ -15,14 +15,12 @@ client = AsyncOpenAI(
 
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
 AVAILABLE_MODELS = {
-    # TEXT MODELS
     "aurora": { "name": "openrouter/aurora-alpha", "display_name": "🌟 Aurora Alpha", "description": "Reasoning (8B)", "context": 128000, "multimodal": False },
     "step": { "name": "stepfun/step-3.5-flash:free", "display_name": "⚡ Step 3.5 Flash", "description": "MoE (196B)", "context": 256000, "multimodal": False },
     "trinity": { "name": "arcee-ai/trinity-large-preview:free", "display_name": "💎 Trinity Large", "description": "Frontier (400B)", "context": 131000, "multimodal": False },
     "liquid-thinking": { "name": "liquid/lfm-2.5-1.2b-thinking:free", "display_name": "🧠 Liquid Thinking", "description": "Small Reasoning", "context": 33000, "multimodal": False },
     "liquid-instruct": { "name": "liquid/lfm-2.5-1.2b-instruct:free", "display_name": "💬 Liquid Instruct", "description": "Small Chat", "context": 33000, "multimodal": False },
     "solar": { "name": "upstage/solar-pro-3:free", "display_name": "☀️ Solar Pro 3", "description": "Korean MoE", "context": 128000, "multimodal": False, "expires": "2026-03-02" },
-    # VISION MODELS
     "gemini-exp": { "name": "google/gemini-2.0-pro-exp-02-05:free", "display_name": "👁️ Gemini 2.0 Pro", "description": "Vision Top", "context": 2000000, "multimodal": True },
     "llama-vision": { "name": "meta-llama/llama-3.2-11b-vision-instruct:free", "display_name": "👁️ Llama 3.2 Vision", "description": "Vision Meta", "context": 128000, "multimodal": True }
 }
@@ -48,12 +46,15 @@ RULES:
 4. IMMERSION: Never break character.
 """
 
+# === ОБНОВЛЕННЫЕ ИНСТРУКЦИИ (РЕАКЦИИ + ЭМОДЗИ) ===
 GLOBAL_INSTRUCTIONS = """
 ФОРМАТ ОТВЕТА:
 1. ЯЗЫК: Живой, разговорный, сленг. НИКАКОГО КАНЦЕЛЯРИТА.
-2. ЦЕНЗУРА: Обычный мат — ок. Дискриминация — нет.
-3. ЛИМИТЫ: Максимум 1 смайлик на сообщение (редко).
-4. БЕЗ ДЕЙСТВИЙ: Не пиши *вздыхает*. Только текст.
+2. ЭМОДЗИ: Старайся писать чистым текстом. Используй смайлы ТОЛЬКО если нужна сильная эмоция (сарказм, гнев, восторг). Не ставь их в каждом предложении.
+3. РЕАКЦИИ: Ты можешь поставить реакцию на сообщение юзера. Для этого добавь в конец ответа тег [REACT:emoji].
+   Доступные реакции: 👍, 👎, ❤, 🔥, 🥰, 👏, 😁, 🤔, 🤯, 😱, 🤬, 😢, 🎉, 🤩, 🤮, 💩, 🙏.
+   Пример: "Какую чушь ты несешь. [REACT:🤦‍♂️]" (или [REACT:💩])
+4. СТИКЕРЫ: Если хочешь отправить стикер, добавь [STICKER].
 """
 
 # === MEMORY ANALYZER ===
@@ -114,14 +115,13 @@ def get_persona_prompt(mood, memory_text=""):
     base = "Ты — Ячейка-тян. "
     prompts = {
         "WITTY_DUCHNILA": "Характер: Остроумная, дотошная. Сарказм - оружие.",
-        "TOXIC": "Характер: Циничная, дерзкая.",
+        "TOXIC": "Характер: Циничная, дерзкая. Грубишь в ответ.",
         "GENKI": "Характер: Веселая, позитивная.",
         "MELANCHOLY": "Характер: Пессимистичная.",
         "PHILOSOPHER": "Характер: Загадочная."
     }
     memory_block = f"\nФАКТЫ О ЮЗЕРЕ:\n{memory_text}\n" if memory_text else ""
-    suffix = "\nЕсли хочешь отправить стикер, напиши в конце [STICKER]."
-    return JAILBREAK_INSTRUCTIONS + "\n" + TBILISI_LORE + "\n" + base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + memory_block + "\n" + GLOBAL_INSTRUCTIONS + suffix
+    return JAILBREAK_INSTRUCTIONS + "\n" + TBILISI_LORE + "\n" + base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + memory_block + "\n" + GLOBAL_INSTRUCTIONS
 
 async def generate_response(db, chat_id, current_message, bot, image_data=None, user_id=None):
     history_rows = await db.get_context(chat_id, limit=15)
@@ -145,17 +145,14 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
     current_mood = determine_mood(current_message)
     persona = get_persona_prompt(current_mood, memory_text)
     
-    # 3. ОПРЕДЕЛЕНИЕ ЗАДАЧИ (ВОТ ТУТ БЫЛА ПРОБЛЕМА)
-    # По умолчанию просто отвечаем
-    task_instruction = "Ответь пользователю, придерживаясь своего характера."
+    # 3. ЗАДАЧА
+    task_instruction = "Ответь пользователю. Реагируй на сообщения (ставь [REACT:emoji]), если они вызывают эмоции."
     
     if is_summary_query(current_message):
-        # Если просят саммари — меняем задачу
-        task_instruction = "ТВОЯ ЗАДАЧА: Прочитай историю сообщений выше (User/Assistant) и напиши краткое, язвительное саммари: кто что сказал, какие темы обсуждали. Если сообщений мало, пошути над этим."
+        task_instruction = "ТВОЯ ЗАДАЧА: Прочитай историю и напиши язвительное саммари."
     elif is_event_query(current_message):
-        task_instruction = f"ТВОЯ ЗАДАЧА: Используя найденные анонсы (ниже) или свою память, подскажи пользователю, куда сходить. Анонсы:\n{found_events_text}"
+        task_instruction = f"ТВОЯ ЗАДАЧА: Подскажи куда сходить. Анонсы:\n{found_events_text}"
 
-    # Собираем очередь моделей
     priority_queue = []
     if image_data:
         priority_queue = [m for m in AVAILABLE_MODELS.values() if m["multimodal"]]
@@ -165,10 +162,8 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
         for k, m in AVAILABLE_MODELS.items():
             if k != DEFAULT_MODEL_KEY and not m["multimodal"]: priority_queue.append(m)
 
-    # 4. ФИНАЛЬНЫЙ ПРОМПТ
     system_prompt = f"{persona}\n\nЗАДАЧА: {task_instruction}"
     
-    # Собираем историю сообщений для контекста
     messages = [{"role": "system", "content": system_prompt}]
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
