@@ -12,24 +12,30 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === СПИСОК МОДЕЛЕЙ (Оптимизированный) ===
+# === СПИСОК МОДЕЛЕЙ (ТОЛЬКО РАБОЧИЕ С VISION) ===
 MODELS = [
-    # 1. СКОРОСТНЫЕ (Для быстрых ответов)
-    {"name": "google/gemma-2-9b-it:free", "vision": False},        # Баланс скорости и ума
-    {"name": "liquid/lfm-2.5-1.2b-instruct:free", "vision": False}, # Молниеносная
-    {"name": "microsoft/phi-3-medium-128k-instruct:free", "vision": False},
+    # 1. МОЩНЫЕ МУЛЬТИМОДАЛЬНЫЕ (ТЕКСТ + ФОТО)
+    # Gemini 2.0 Pro Exp - Самая умная из бесплатных на сегодня
+    {"name": "google/gemini-2.0-pro-exp-02-05:free", "vision": True},
+    
+    # Gemini 2.0 Flash Thinking - Думающая модель, видит фото
+    {"name": "google/gemini-2.0-flash-thinking-exp:free", "vision": True},
 
-    # 2. VISION (Для просмотра фото)
-    # Gemini Flash - быстрая, бесплатная на OpenRouter и отлично видит картинки
-    {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "vision": True}, 
+    # 2. СПЕЦИАЛИЗИРОВАННЫЕ НА VISION
+    # Llama 3.2 11B Vision - Официальная поддержка картинок от Meta
+    {"name": "meta-llama/llama-3.2-11b-vision-instruct:free", "vision": True},
+    
+    # Qwen 2.5 VL 72B - Мощная модель с отличным зрением
+    {"name": "qwen/qwen-2.5-vl-72b-instruct:free", "vision": True},
+    
+    # AllenAI Molmo 2 - Специально создана для описания картинок
+    {"name": "allenai/molmo-2-8b:free", "vision": True},
 
-    # 3. РЕЗЕРВ (Твои старые тяжелые модели)
-    # Используются, если быстрые упали или нужно "подумать"
-    {"name": "qwen/qwen-2.5-72b-instruct:free", "vision": False}, 
-    {"name": "tngtech/deepseek-r1t2-chimera", "vision": False},
-    {"name": "nvidia/llama-3.1-nemotron-70b-instruct:free", "vision": False},
-    {"name": "venice/uncensored:free", "vision": False},
-    {"name": "openrouter/free", "vision": False},
+    # 3. БЫСТРЫЕ ТЕКСТОВЫЕ (РЕЗЕРВ)
+    # Используются, если картинки нет, для скорости
+    {"name": "google/gemma-3-27b-it:free", "vision": True}, # Тоже умеет в картинки!
+    {"name": "liquid/lfm-2.5-1.2b-instruct:free", "vision": False},
+    {"name": "mistralai/mistral-small-3.2-24b-instruct:free", "vision": False},
 ]
 
 def clean_response(text):
@@ -37,8 +43,12 @@ def clean_response(text):
     if not isinstance(text, str): text = str(text)
     if not text: return ""
     
-    # Удаляем мысли <think>, если просочились
+    # Удаляем "мысли" (<think>...</think>)
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    
+    # Удаляем системные префиксы в самом тексте (на всякий случай)
+    # Например: "Bot: Привет" -> "Привет"
+    text = re.sub(r'^(Bot|System|Assistant|Yachejka|User):\s*', '', text.strip(), flags=re.IGNORECASE)
     
     # Чистим лишние пустые строки
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -62,10 +72,8 @@ def is_event_query(text):
 
 # === НАСТРОЕНИЕ И ЭМОЦИИ ===
 def determine_mood(text):
-    """Определяет настроение бота. По умолчанию - Душнила."""
     text = text.lower()
     
-    # 1. Реакция на триггеры (перебивает рандом)
     if any(w in text for w in ["грустно", "плохо", "устал", "депрес", "вода", "свет"]):
         return "MELANCHOLY"
     if any(w in text for w in ["тупая", "глупая", "бот", "железяка", "дура"]):
@@ -73,9 +81,7 @@ def determine_mood(text):
     if any(w in text for w in ["спасибо", "молодец", "умница", "люблю", "красотка", "няша"]):
         return "GENKI"
 
-    # 2. Рандом (Рулетка настроений)
-    # WITTY_DUCHNILA (60%) - твой основной запрос
-    # Остальные по 10% для разнообразия
+    # Рулетка: 60% Душнила
     moods = ["WITTY_DUCHNILA", "TOXIC", "MELANCHOLY", "GENKI", "PHILOSOPHER"]
     weights = [0.60, 0.10, 0.10, 0.10, 0.10]
     
@@ -119,7 +125,8 @@ async def extract_anime_title(text):
     try:
         messages = [{"role": "user", "content": f"Extract anime title from text: '{text[:500]}'. Return ONLY title or 'NO'."}]
         response = await client.chat.completions.create(
-            model="liquid/lfm-2.5-1.2b-instruct:free", # Используем самую легкую модель для утилит
+            # Используем Gemma 3 для скорости, она тоже мультимодальная и умная
+            model="google/gemma-3-27b-it:free", 
             messages=messages, max_tokens=20
         )
         t = response.choices[0].message.content.strip().replace('"', '')
@@ -129,36 +136,29 @@ async def extract_anime_title(text):
 async def generate_response(db, chat_id, current_message, bot, image_data=None):
     history_rows = await db.get_context(chat_id, limit=6)
     
-    # ... (логика поиска summary и event оставляем, она работает) ...
-    # (Для краткости код поиска не дублирую, он стандартный)
     found_events_text = ""
     shikimori_info = ""
     
     need_search = is_event_query(current_message)
     need_summary = is_summary_query(current_message)
     
-    # Если ищем ивенты - запускаем поиск (как было у тебя)
     if need_search:
         raw_events = await db.get_potential_announcements(chat_id, days=60, limit=5)
         if raw_events:
             lines = [f"- {e.get('content')[:100]}..." for e in raw_events]
             found_events_text = "Найденные анонсы:\n" + "\n".join(lines)
 
-    # Определяем настроение
     current_mood = determine_mood(current_message)
     persona = get_persona_prompt(current_mood)
     
-    # Формируем список моделей для перебора
-    # Если есть картинка -> берем только те, где vision=True.
-    # Если нет -> берем все (сначала быстрые).
-    candidate_models = MODELS
-    if image_data:
-        candidate_models = [m for m in MODELS if m['vision']]
-        # Если вдруг бесплатных vision нет, добавляем резерв (на удачу)
-        if not candidate_models: 
-            candidate_models = MODELS 
+    # === ВЫБОР МОДЕЛЕЙ ===
+    # Сначала пробуем модели с vision=True
+    candidate_models = [m for m in MODELS if m['vision']]
     
-    # Промпт
+    # Если картинки нет, добавляем в конец списка быстрые текстовые модели
+    if not image_data:
+        candidate_models.extend([m for m in MODELS if not m['vision']])
+
     system_prompt = f"{persona}\nКОНТЕКСТ:\n{found_events_text}\n{shikimori_info}\nЗАДАЧА: Ответь пользователю."
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -167,7 +167,6 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
         content = clean_response(row.get('content'))
         if content: messages.append({"role": role, "content": content})
 
-    # Добавляем сообщение юзера
     user_msg_content = [{"type": "text", "text": current_message}]
     
     if image_data:
@@ -183,7 +182,6 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
 
     messages.append({"role": "user", "content": user_msg_content})
 
-    # Перебор моделей
     for model_cfg in candidate_models:
         try:
             max_tok = 800 if (need_search or need_summary) else 250
@@ -191,7 +189,7 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None):
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
-                temperature=0.7, # Чуть выше для "живости"
+                temperature=0.7,
                 max_tokens=max_tok,
                 extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
             )
