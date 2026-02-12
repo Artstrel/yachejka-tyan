@@ -46,12 +46,10 @@ class Database:
         except Exception as e:
             logging.error(f"DB Write Error: {e}")
 
-    # ОБНОВЛЕНО: Добавлен thread_id для фильтрации по топикам
     async def get_context(self, chat_id, thread_id=None, limit=15):
         if self.db is None: return []
         try:
             query = {"chat_id": chat_id}
-            # Если это топик (thread_id не None и не 0), фильтруем строго по нему
             if thread_id:
                 query["thread_id"] = thread_id
             
@@ -120,4 +118,7 @@ class Database:
             user_facts = await cursor_user.to_list(length=3)
             
             cursor_global = self.db.memory.find({"chat_id": chat_id, "user_id": {"$ne": user_id}}).sort("timestamp", -1).limit(2)
-            global_facts = await cursor_global.to_list
+            global_facts = await cursor_global.to_list(length=2)
+            
+            return user_facts + global_facts
+        except Exception: return []
