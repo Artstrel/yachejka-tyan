@@ -7,10 +7,9 @@ import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, ReactionTypeEmoji
 import config
 from database.db import Database
-# Импортируем новую функцию анализа памяти
 from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
 from keep_alive import start_server
 
@@ -76,13 +75,9 @@ async def main_handler(message: types.Message):
 
     should_answer = is_cmd or is_mentioned or is_reply or (random.random() < chance)
     
-    # 1. СОХРАНЯЕМ СООБЩЕНИЕ
     if config.DATABASE_URL:
         await db.add_message(chat_id, message.message_id, user_id, 
                              user_name, 'user', text, message.message_thread_id)
-        
-        # 2. ЗАПУСКАЕМ АНАЛИЗ ПАМЯТИ (В ФОНЕ)
-        # Бот не ждет этого, он сразу идет отвечать
         asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
     if not should_answer: return
@@ -101,19 +96,36 @@ async def main_handler(message: types.Message):
     typing_task = asyncio.create_task(keep_typing(chat_id, bot))
     
     try:
-        # Передаем user_id чтобы достать факты
         ai_reply = await generate_response(db, chat_id, text, bot, image_data, user_id=user_id)
     finally:
         typing_task.cancel()
 
     if not ai_reply: return
 
-    # Очистка
+    # === ОБРАБОТКА ТЕГОВ ===
+    
+    # 1. Реакции [REACT:🔥]
+    reaction_match = re.search(r"\[REACT:(.+?)\]", ai_reply)
+    if reaction_match:
+        emoji = reaction_match.group(1).strip()
+        ai_reply = ai_reply.replace(reaction_match.group(0), "")
+        try:
+            # Ставим реакцию на сообщение юзера
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)]
+            )
+        except Exception: 
+            pass # Если эмодзи невалидный или запрещен в чате, просто игнорим
+
+    # 2. Стикеры [STICKER]
     send_sticker_flag = False
     if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
+    # 3. Очистка мусора
     ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
     ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
     ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
@@ -124,7 +136,8 @@ async def main_handler(message: types.Message):
             if config.DATABASE_URL:
                 await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, message.message_thread_id)
         
-        if (send_sticker_flag or random.random() < 0.02) and config.DATABASE_URL:
+        # Шанс стикера повышен до 8%
+        if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
                 await asyncio.sleep(1)
