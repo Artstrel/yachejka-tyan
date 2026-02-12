@@ -15,23 +15,18 @@ class Database:
             return
         try:
             self.client = motor.motor_asyncio.AsyncIOMotorClient(self.uri)
-            
-            # === ФИКС ОШИБКИ "No default database defined" ===
             try:
-                # Пытаемся взять имя базы из ссылки
                 self.db = self.client.get_database()
             except Exception:
-                # Если в ссылке нет имени, используем дефолтное
                 logging.warning("⚠️ No DB name in URI, using default 'yachejka_bot'")
                 self.db = self.client.get_database("yachejka_bot")
 
-            # Проверка соединения
             await self.client.admin.command('ping')
             logging.info("✅ Connected to MongoDB")
             
         except Exception as e:
             logging.error(f"❌ Failed to connect to MongoDB: {e}")
-            self.db = None # Чтобы бот не падал при попытке записи, а просто пропускал
+            self.db = None
 
     # --- CHAT HISTORY ---
     async def add_message(self, chat_id, message_id, user_id, user_name, role, content, thread_id=None):
@@ -51,10 +46,16 @@ class Database:
         except Exception as e:
             logging.error(f"DB Write Error: {e}")
 
-    async def get_context(self, chat_id, limit=15):
+    # ОБНОВЛЕНО: Добавлен thread_id для фильтрации по топикам
+    async def get_context(self, chat_id, thread_id=None, limit=15):
         if self.db is None: return []
         try:
-            cursor = self.db.messages.find({"chat_id": chat_id}).sort("timestamp", -1).limit(limit)
+            query = {"chat_id": chat_id}
+            # Если это топик (thread_id не None и не 0), фильтруем строго по нему
+            if thread_id:
+                query["thread_id"] = thread_id
+            
+            cursor = self.db.messages.find(query).sort("timestamp", -1).limit(limit)
             messages = await cursor.to_list(length=limit)
             return messages[::-1]
         except Exception:
@@ -115,13 +116,8 @@ class Database:
     async def get_relevant_facts(self, chat_id, user_id, limit=5):
         if self.db is None: return []
         try:
-            # 1. Факты об этом юзере
             cursor_user = self.db.memory.find({"chat_id": chat_id, "user_id": user_id}).sort("timestamp", -1).limit(3)
             user_facts = await cursor_user.to_list(length=3)
             
-            # 2. Общие факты
             cursor_global = self.db.memory.find({"chat_id": chat_id, "user_id": {"$ne": user_id}}).sort("timestamp", -1).limit(2)
-            global_facts = await cursor_global.to_list(length=2)
-            
-            return user_facts + global_facts
-        except Exception: return []
+            global_facts = await cursor_global.to_list
