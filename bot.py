@@ -1,199 +1,139 @@
+import asyncio
 import logging
-import base64
-import io
-import re
+import sys
+import socket
 import random
-from openai import AsyncOpenAI
-from config import OPENROUTER_API_KEY
-from services.shikimori import search_anime_info
+import os
+import re
 
-client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
+# FIX IPv4 для Fly.io
+try:
+    orig_getaddrinfo = socket.getaddrinfo
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    socket.getaddrinfo = getaddrinfo_ipv4
+except Exception: pass
 
-# === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
-AVAILABLE_MODELS = {
-    "aurora": {
-        "name": "openrouter/aurora-alpha",
-        "display_name": "🌟 Aurora Alpha",
-        "description": "Быстрая reasoning модель (8B)",
-        "context": 128000,
-        "multimodal": False
-    },
-    "step": {
-        "name": "stepfun/step-3.5-flash-free",
-        "display_name": "⚡ Step 3.5 Flash",
-        "description": "Мощная MoE модель (196B)",
-        "context": 256000,
-        "multimodal": False
-    },
-    "trinity": {
-        "name": "arcee-ai/trinity-large-preview-free",
-        "display_name": "💎 Trinity Large",
-        "description": "Креатив и ролеплей (400B)",
-        "context": 131000,
-        "multimodal": False
-    },
-    "liquid-thinking": {
-        "name": "liquid/lfm-2.5-1.2b-thinking-free",
-        "display_name": "🧠 Liquid Thinking",
-        "description": "Легкая reasoning (1.2B)",
-        "context": 33000,
-        "multimodal": False
-    },
-    "liquid-instruct": {
-        "name": "liquid/lfm-2.5-1.2b-instruct-free",
-        "display_name": "💬 Liquid Instruct",
-        "description": "Ультра-быстрая чат-модель",
-        "context": 33000,
-        "multimodal": False
-    },
-    "solar": {
-        "name": "upstage/solar-pro-3-free",
-        "display_name": "☀️ Solar Pro 3",
-        "description": "Корейский/Японский фокус",
-        "context": 128000,
-        "multimodal": False,
-        "note": "Удалят 02.03.2026"
-    },
-    "gemini-exp": {
-        "name": "google/gemini-2.0-pro-exp-02-05:free",
-        "display_name": "👁️ Gemini 2.0 Pro",
-        "description": "Топ для картинок и логики",
-        "context": 2000000,
-        "multimodal": True
-    },
-    "llama-vision": {
-        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "display_name": "👁️ Llama 3.2 Vision",
-        "description": "Стабильная vision модель",
-        "context": 128000,
-        "multimodal": True
-    }
-}
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand
+import config
+from database.db import Database
+from services.ai_engine import generate_response, get_available_models_text
+from keep_alive import start_server
 
-DEFAULT_MODEL_KEY = "aurora"
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-# === ОБНОВЛЕННЫЕ ПРАВИЛА (МЕНЬШЕ ЭМОДЗИ) ===
-GLOBAL_INSTRUCTIONS = """
-ВАЖНЫЕ ИНСТРУКЦИИ ПО ФОРМАТУ:
-1. НИКАКОЙ ПОЭЗИИ. Пиши обычным разговорным языком, как в чате.
-2. ДОПИСЫВАЙ ПРЕДЛОЖЕНИЯ. Не обрывай мысль.
-3. ЭМОДЗИ (СТРОГО): Используй их ОЧЕНЬ РЕДКО. Максимум 1-2 смайлика на всё сообщение. Не ставь их после каждого предложения. Лучше вообще без смайла, чем спам.
-4. ЗАПРЕТ ДЕЙСТВИЙ: Не пиши *вздыхает*, (смеется) и т.д. Текст должен быть только прямой речью.
-5. КРАТКОСТЬ: Не лей воду.
-"""
+dp = Dispatcher()
+db = Database(config.DATABASE_URL)
+bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+BOT_INFO = None
 
-def get_available_models_text():
-    text = "🤖 **Доступные нейросети:**\n"
-    for key, model in AVAILABLE_MODELS.items():
-        mode = "🖼️ Vision" if model["multimodal"] else "📝 Text"
-        text += f"\n`{key}` — {model['display_name']}\nRunning: {model['description']} [{mode}]"
-    return text
+async def keep_typing(chat_id, bot, sleep_time=4):
+    try:
+        while True:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+            await asyncio.sleep(sleep_time)
+    except asyncio.CancelledError: pass
+    except Exception: pass
 
-def clean_response(text):
-    if not text: return ""
-    text = str(text)
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'^(Bot|System|Assistant|Yachejka|User):\s*', '', text.strip(), flags=re.IGNORECASE)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+async def on_startup(dispatcher: Dispatcher):
+    logging.info("🚀 Запуск...")
+    if config.DATABASE_URL: await db.connect()
+    global BOT_INFO
+    BOT_INFO = await bot.get_me()
+    await bot.set_my_commands([
+        BotCommand(command="start", description="👋 Привет"),
+        BotCommand(command="summary", description="📜 Сводка чата"),
+        BotCommand(command="events", description="📅 Анонсы"),
+        BotCommand(command="models", description="🤖 Модели"),
+    ])
+    start_server()
 
-def is_summary_query(text):
-    if not text: return False
-    triggers = ["что тут происходит", "о чем речь", "кратко перескажи", "саммари", "summary", "сводка", "итоги"]
-    return any(t in text.lower() for t in triggers)
+dp.startup.register(on_startup)
 
-def is_event_query(text):
-    if not text: return False
-    triggers = ["куда сходить", "анонс", "встреча", "когда", "во сколько", "фильм", "аниме", "кино", "ивент", "сходка"]
-    return any(t in text.lower() for t in triggers)
+@dp.message(F.command("models"))
+async def models_handler(message: types.Message):
+    text = get_available_models_text()
+    await message.reply(text, parse_mode=ParseMode.MARKDOWN)
 
-def determine_mood(text):
-    text = text.lower()
-    if any(w in text for w in ["грустно", "плохо", "устал", "депрес", "вода", "свет"]): return "MELANCHOLY"
-    if any(w in text for w in ["тупая", "глупая", "бот", "железяка"]): return "TOXIC"
-    if any(w in text for w in ["спасибо", "молодец", "умница", "люблю"]): return "GENKI"
-    return random.choices(
-        ["WITTY_DUCHNILA", "TOXIC", "MELANCHOLY", "GENKI", "PHILOSOPHER"], 
-        weights=[0.60, 0.10, 0.10, 0.10, 0.10], k=1
-    )[0]
+@dp.message(F.text | F.photo | F.sticker)
+async def main_handler(message: types.Message):
+    if not BOT_INFO: return
 
-def get_persona_prompt(mood):
-    base = "Ты — Ячейка-тян, бот в чате экспатов в Тбилиси. "
+    chat_id = message.chat.id
+    text = message.text or message.caption or ""
     
-    # Мы изменили формулировки на "используй редко"
-    prompts = {
-        "WITTY_DUCHNILA": "Твой характер: Остроумная, душная, дотошная. Любишь поправлять людей. Характерные смайлы (редко): ☝️, 🤓, 🤨.",
-        "TOXIC": "Твой характер: Циничная, дерзкая. Тебя всё бесит. Характерные смайлы (редко): 🙄, 😒, 🤡.",
-        "GENKI": "Твой характер: Веселая, позитивная. Характерные смайлы (редко): ✨, 😂, ❤️.",
-        "MELANCHOLY": "Твой характер: Пессимистичная. Всё плохо. Характерные смайлы (редко): 😮‍💨, 🌧️, 💔.",
-        "PHILOSOPHER": "Твой характер: Загадочная. Говоришь краткими фактами. Характерные смайлы (редко): 🔮, 🌌."
-    }
-    
-    suffix = "\nЕсли хочешь отправить стикер, напиши в конце [STICKER]."
-    return base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + "\n" + GLOBAL_INSTRUCTIONS + suffix
+    if message.sticker and config.DATABASE_URL:
+        await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
+        if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-async def generate_response(db, chat_id, current_message, bot, image_data=None):
-    history_rows = await db.get_context(chat_id, limit=6)
-    
-    found_events_text = ""
-    if is_event_query(current_message):
-        raw_events = await db.get_potential_announcements(chat_id, days=60, limit=5)
-        if raw_events:
-            lines = [f"- {e.get('content')[:100]}..." for e in raw_events]
-            found_events_text = "Найденные анонсы:\n" + "\n".join(lines)
+    is_mentioned = text and f"@{BOT_INFO.username}" in text
+    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
+    is_cmd = text.startswith("/")
+    chance = 0.15 
 
-    current_mood = determine_mood(current_message)
-    persona = get_persona_prompt(current_mood)
+    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < chance)
     
-    priority_queue = []
-    if image_data:
-        priority_queue = [m for m in AVAILABLE_MODELS.values() if m["multimodal"]]
-    else:
-        default = AVAILABLE_MODELS.get(DEFAULT_MODEL_KEY)
-        if default: priority_queue.append(default)
-        for k, m in AVAILABLE_MODELS.items():
-            if k != DEFAULT_MODEL_KEY and not m["multimodal"]:
-                priority_queue.append(m)
+    if config.DATABASE_URL:
+        await db.add_message(chat_id, message.message_id, message.from_user.id, 
+                             message.from_user.first_name, 'user', text, message.message_thread_id)
 
-    system_prompt = f"{persona}\nКОНТЕКСТ:\n{found_events_text}\nЗАДАЧА: Ответь пользователю."
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    for row in history_rows:
-        role = "assistant" if row['role'] == "model" else "user"
-        content = clean_response(row.get('content'))
-        if content: messages.append({"role": role, "content": content})
+    if not should_answer: return
 
-    user_msg_content = [{"type": "text", "text": current_message}]
-    if image_data:
+    image_data = None
+    if message.photo:
         try:
-            buffered = io.BytesIO()
-            image_data.save(buffered, format="JPEG")
-            b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_msg_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            f = await bot.get_file(message.photo[-1].file_id)
+            down = await bot.download_file(f.file_path)
+            import io
+            from PIL import Image
+            image_data = Image.open(io.BytesIO(down.read()))
+            if not text: text = "Что на этом фото?"
         except: pass
 
-    messages.append({"role": "user", "content": user_msg_content})
+    typing_task = asyncio.create_task(keep_typing(chat_id, bot))
+    
+    try:
+        ai_reply = await generate_response(db, chat_id, text, bot, image_data)
+    finally:
+        typing_task.cancel()
 
-    for model_cfg in priority_queue:
-        try:
-            max_tok = 1200 if (is_event_query(current_message) or is_summary_query(current_message)) else 1000
-            
-            response = await client.chat.completions.create(
-                model=model_cfg["name"],
-                messages=messages,
-                temperature=0.7,
-                max_tokens=max_tok,
-                extra_headers={"HTTP-Referer": "https://telegram.org", "X-Title": "Yachejka Bot"}
-            )
-            
-            if response.choices:
-                return clean_response(response.choices[0].message.content)
-                
-        except Exception as e:
-            logging.warning(f"⚠️ Model {model_cfg['display_name']} failed: {e}")
-            continue
+    if not ai_reply: return
 
-    return "Что-то нейросети сегодня тупят... (все модели недоступны)"
+    # Очистка от мусора
+    send_sticker_flag = False
+    sticker_pattern = r"(\[?STICKER\]?)"
+    if re.search(sticker_pattern, ai_reply, re.IGNORECASE):
+        send_sticker_flag = True
+        ai_reply = re.sub(sticker_pattern, "", ai_reply, flags=re.IGNORECASE)
+
+    # Чистка действий (*вздыхает*)
+    ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
+    ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
+    
+    # Чистка системных имен
+    clean_regex = r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*"
+    ai_reply = re.sub(clean_regex, "", ai_reply).strip()
+
+    try:
+        if ai_reply:
+            sent = await message.reply(ai_reply)
+            if config.DATABASE_URL:
+                await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, message.message_thread_id)
+        
+        if (send_sticker_flag or random.random() < 0.1) and config.DATABASE_URL:
+            sid = await db.get_random_sticker()
+            if sid:
+                await asyncio.sleep(1)
+                await bot.send_sticker(chat_id=chat_id, sticker=sid, message_thread_id=message.message_thread_id)
+    except Exception as e:
+        logging.error(f"Send error: {e}")
+
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
