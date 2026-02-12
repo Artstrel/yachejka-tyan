@@ -102,7 +102,8 @@ async def main_handler(message: types.Message):
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
     
     try:
-        ai_reply = await generate_response(db, chat_id, text, bot, image_data, user_id=user_id)
+        # ОБНОВЛЕНО: Передаем thread_id
+        ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
     finally:
         typing_task.cancel()
 
@@ -110,22 +111,17 @@ async def main_handler(message: types.Message):
 
     # === УЛУЧШЕННАЯ ОБРАБОТКА ТЕГОВ ===
     
-    # 1. Ловим реакцию с любыми скобками или без: [REACT:🔥], REACT:🔥
     explicit_reaction = None
-    # Regex: \[? - возможная скобка, REACT: - текст, [\s]* - пробелы, ([^\s\]]+) - сам смайл, \]? - скобка
     reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
     if reaction_match:
         explicit_reaction = reaction_match.group(1).strip()
-        # Вырезаем ВЕСЬ найденный кусок
         ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
-    # 2. Ловим стикер
     send_sticker_flag = False
     if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
         send_sticker_flag = True
         ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-    # 3. Чистка
     ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
     ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
     ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
@@ -148,8 +144,9 @@ async def main_handler(message: types.Message):
                 )
             except Exception: pass
 
-        # Стикеры (8%)
-        if (send_sticker_flag or random.random() < 0.08) and config.DATABASE_URL:
+        # Стикеры
+        # ОБНОВЛЕНО: Шанс случайного стикера повышен до 20%
+        if (send_sticker_flag or random.random() < 0.20) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
                 await asyncio.sleep(1)
