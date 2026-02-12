@@ -15,6 +15,14 @@ client = AsyncOpenAI(
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
 AVAILABLE_MODELS = {
+    "deepseek-v3": {
+        "name": "deepseek/deepseek-chat:free",
+        "display_name": "⚡ DeepSeek V3",
+        "description": "Fast & Smart",
+        "context": 64000,
+        "multimodal": False,
+        "priority": 3
+    },
     "deepseek-r1": {
         "name": "deepseek/deepseek-r1-0528:free",
         "display_name": "🧠 DeepSeek R1",
@@ -30,14 +38,6 @@ AVAILABLE_MODELS = {
         "context": 128000,
         "multimodal": False,
         "priority": 2
-    },
-    "deepseek-v3": {
-        "name": "deepseek/deepseek-chat:free",
-        "display_name": "⚡ DeepSeek V3",
-        "description": "Fast & Smart",
-        "context": 64000,
-        "multimodal": False,
-        "priority": 3
     },
     "gemini-flash": {
         "name": "google/gemini-2.0-flash-exp:free",
@@ -57,7 +57,7 @@ AVAILABLE_MODELS = {
     }
 }
 
-DEFAULT_MODEL_KEY = "deepseek-r1"
+DEFAULT_MODEL_KEY = "deepseek-v3"
 
 # === ЛОР (ПАССИВНЫЙ) ===
 TBILISI_LORE = """
