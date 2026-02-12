@@ -46,26 +46,24 @@ RULES:
 4. IMMERSION: Never break character.
 """
 
-# === ОБНОВЛЕННЫЕ ИНСТРУКЦИИ (УМНЫЕ РЕАКЦИИ) ===
+# === ОБНОВЛЕННЫЕ ИНСТРУКЦИИ (РЕАКЦИИ И ФАКТЫ) ===
 GLOBAL_INSTRUCTIONS = """
 ФОРМАТ ОТВЕТА:
 1. ЯЗЫК: Живой, разговорный, сленг. НИКАКОГО КАНЦЕЛЯРИТА.
 2. ЭМОДЗИ: В тексте используй редко.
-3. РЕАКЦИИ [ВАЖНО]: 
-   Ты ОБЯЗАНА реагировать на контекст сообщения ЮЗЕРА. Добавь в конец ответа тег [REACT:emoji].
-   - Если смешно -> [REACT:😂] или [REACT:😁]
-   - Если юзер тупит/бесит -> [REACT:🤦‍♂️] или [REACT:🙄] (но не перебарщивай с 🤨)
-   - Если мило/приятно -> [REACT:❤] или [REACT:🥰]
-   - Если шок/новость -> [REACT:😱] или [REACT:🤯]
-   - Если база/согласна -> [REACT:👍] или [REACT:🔥]
-   - Если грустно -> [REACT:😢]
-   - Если срач/агрессия -> [REACT:🤬] или [REACT:🤡]
-   
-   Выбирай реакцию исходя из ТОГО, ЧТО НАПИСАЛ ЮЗЕР, а не того, что пишешь ты.
-4. СТИКЕРЫ: Если хочешь отправить стикер, добавь [STICKER].
+3. РЕАКЦИИ [ВАЖНО]:
+   Ты ОБЯЗАНА ставить реакции [REACT:emoji], если сообщение вызывает эмоции.
+   НЕ ИСПОЛЬЗУЙ ОДНИ И ТЕ ЖЕ! Разнообразь:
+   - Смешно: 😂, 😁, 🤣
+   - Глупо/Бесит: 🙄, 🤦‍♂️, 🤨, 😐
+   - Мило: 🥰, ❤, 🥺
+   - Шок: 🤯, 😱, 👀
+   - Одобрение: 🔥, 👍, 😎, 🤝
+   - Агрессия: 🤬, 🖕, 🤡
+   Ставь реакцию на то, ЧТО НАПИСАЛ ЮЗЕР.
+4. ВЫДУМКИ: Если спрашивают про события/анонсы, а ты их не нашла в контексте — ЧЕСТНО СКАЖИ "Ничего не слышала". Не выдумывай несуществующие сходки!
 """
 
-# === MEMORY ANALYZER ===
 async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     if len(text) < 15: return 
     prompt = f"Analyze message from '{user_name}': '{text}'. Does it contain PERMANENT interesting fact (job, hobby, pets)? If YES, write short fact in Russian. If NO, write 'NO'."
@@ -108,7 +106,7 @@ def is_summary_query(text):
     return text and any(t in text.lower() for t in triggers)
 
 def is_event_query(text):
-    triggers = ["куда сходить", "анонс", "встреча", "когда", "фильм", "кино", "ивент", "сходка"]
+    triggers = ["куда сходить", "анонс", "встреча", "когда", "фильм", "кино", "ивент", "сходка", "планы"]
     return text and any(t in text.lower() for t in triggers)
 
 def determine_mood(text):
@@ -121,19 +119,21 @@ def determine_mood(text):
 
 def get_persona_prompt(mood, memory_text=""):
     base = "Ты — Ячейка-тян. "
-    # Убрали навязывание конкретных смайлов в характерах
     prompts = {
-        "WITTY_DUCHNILA": "Характер: Остроумная, дотошная. Сарказм - оружие. Любишь подмечать детали.",
-        "TOXIC": "Характер: Циничная, дерзкая. Грубишь в ответ, если собеседник не прав.",
-        "GENKI": "Характер: Веселая, позитивная. Энергичная.",
-        "MELANCHOLY": "Характер: Пессимистичная. Тбилисская тоска.",
-        "PHILOSOPHER": "Характер: Загадочная. Говоришь метафорами."
+        "WITTY_DUCHNILA": "Характер: Остроумная, дотошная. Сарказм - оружие.",
+        "TOXIC": "Характер: Циничная, дерзкая. Грубишь в ответ.",
+        "GENKI": "Характер: Веселая, позитивная.",
+        "MELANCHOLY": "Характер: Пессимистичная.",
+        "PHILOSOPHER": "Характер: Загадочная."
     }
     memory_block = f"\nФАКТЫ О ЮЗЕРЕ:\n{memory_text}\n" if memory_text else ""
     return JAILBREAK_INSTRUCTIONS + "\n" + TBILISI_LORE + "\n" + base + prompts.get(mood, prompts["WITTY_DUCHNILA"]) + memory_block + "\n" + GLOBAL_INSTRUCTIONS
 
 async def generate_response(db, chat_id, current_message, bot, image_data=None, user_id=None):
-    history_rows = await db.get_context(chat_id, limit=15)
+    # === ЛОГИКА КОНТЕКСТА ===
+    # Если просят саммари, читаем глубоко (50 сообщений), чтобы увидеть все ветки
+    limit_history = 500 if is_summary_query(current_message) else 15
+    history_rows = await db.get_context(chat_id, limit=limit_history)
     
     memory_text = ""
     if user_id:
@@ -142,22 +142,27 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
             lines = [f"- {f['user_name']}: {f['fact']}" for f in facts]
             memory_text = "\n".join(lines)
 
+    # Поиск анонсов
     found_events_text = ""
     if is_event_query(current_message):
         raw_events = await db.get_potential_announcements(chat_id, days=60, limit=5)
         if raw_events:
-            lines = [f"- {e.get('content')[:100]}..." for e in raw_events]
-            found_events_text = "Найденные анонсы:\n" + "\n".join(lines)
+            lines = [f"- {e.get('content')[:150]}..." for e in raw_events]
+            found_events_text = "\n".join(lines)
 
     current_mood = determine_mood(current_message)
     persona = get_persona_prompt(current_mood, memory_text)
     
-    task_instruction = "Ответь пользователю. ОБЯЗАТЕЛЬНО выбери реакцию [REACT:...] на его сообщение."
+    # === ФОРМИРОВАНИЕ ЗАДАЧИ ===
+    task_instruction = "Ответь пользователю. Если уместно, выбери реакцию [REACT:emoji] на его сообщение."
     
     if is_summary_query(current_message):
-        task_instruction = "ТВОЯ ЗАДАЧА: Прочитай историю и напиши язвительное саммари."
+        task_instruction = f"ТВОЯ ЗАДАЧА: Прочитай последние {limit_history} сообщений (ниже) и напиши краткое, язвительное саммари: кто что обсуждал. Учитывай, что темы могут быть разными."
     elif is_event_query(current_message):
-        task_instruction = f"ТВОЯ ЗАДАЧА: Подскажи куда сходить. Анонсы:\n{found_events_text}"
+        if found_events_text:
+            task_instruction = f"ТВОЯ ЗАДАЧА: Подскажи куда сходить, основываясь на этих анонсах из чата:\n{found_events_text}"
+        else:
+            task_instruction = "ТВОЯ ЗАДАЧА: Пользователь ищет события. В базе данных анонсов НЕТ. Честно скажи: 'Ничего не нашла, в чате тишина'. НЕ ВЫДУМЫВАЙ события."
 
     priority_queue = []
     if image_data:
@@ -171,10 +176,18 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
     system_prompt = f"{persona}\n\nЗАДАЧА: {task_instruction}"
     
     messages = [{"role": "system", "content": system_prompt}]
+    
+    # Формируем историю. Для саммари важно указать имена
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
         content = clean_response(row.get('content'))
-        if content: messages.append({"role": role, "content": content})
+        name = row.get('user_name', 'User')
+        if content: 
+            # Добавляем имя, чтобы бот различал людей в саммари
+            if role == "user":
+                messages.append({"role": role, "content": f"{name}: {content}"})
+            else:
+                messages.append({"role": role, "content": content})
 
     user_msg_content = [{"type": "text", "text": current_message}]
     if image_data:
@@ -189,7 +202,8 @@ async def generate_response(db, chat_id, current_message, bot, image_data=None, 
 
     for model_cfg in priority_queue:
         try:
-            max_tok = 1200 if (is_event_query(current_message) or is_summary_query(current_message)) else 1000
+            # Для саммари нужно больше токенов на вход и выход
+            max_tok = 1500 if (is_event_query(current_message) or is_summary_query(current_message)) else 1000
             
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
