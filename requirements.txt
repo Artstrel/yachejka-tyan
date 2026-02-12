@@ -1,8 +1,6 @@
-aiogram
-aiohttp
-motor
-dnspython
-python-dotenv
-Pillow
-openai
-flask
+aiogram==3.15.0
+asyncpg==0.30.0
+python-dotenv==1.0.1
+Pillow==11.0.0
+openai==1.59.7
+aiohttp==3.11.11
