@@ -41,8 +41,6 @@ async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
     except Exception: pass
 
 async def on_startup(dispatcher: Dispatcher):
-    # === ГЛАВНОЕ ИСПРАВЛЕНИЕ ===
-    # Запускаем сервер СРАЗУ, чтобы Fly.io не убил нас за таймаут
     start_server() 
     logging.info("✅ Web server started (health check passed)")
 
@@ -108,58 +106,63 @@ async def main_handler(message: types.Message):
             if not text: text = "Что на этом фото?"
         except: pass
 
+    # === ЗАПУСК ИНДИКАТОРА ПЕЧАТИ (СРАЗУ) ===
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
     
     try:
-        # Передаем thread_id (логика из прошлого шага сохранена)
         ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
-    finally:
-        typing_task.cancel()
+        
+        if not ai_reply: return
 
-    if not ai_reply: return
+        # === ОБРАБОТКА ТЕГОВ ===
+        explicit_reaction = None
+        reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
+        if reaction_match:
+            explicit_reaction = reaction_match.group(1).strip()
+            ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
-    # === ОБРАБОТКА ТЕГОВ ===
-    explicit_reaction = None
-    reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
-    if reaction_match:
-        explicit_reaction = reaction_match.group(1).strip()
-        ai_reply = ai_reply.replace(reaction_match.group(0), "")
+        send_sticker_flag = False
+        if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
+            send_sticker_flag = True
+            ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-    send_sticker_flag = False
-    if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
-        send_sticker_flag = True
-        ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
+        ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
+        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
+        ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
 
-    ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
-    ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) 
-    ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name)[\*\s]*:?\s*", "", ai_reply).strip()
+        # === ЛОГИКА ОТПРАВКИ (СТИКЕР vs РЕАКЦИЯ) ===
+        
+        # 1. Сначала проверяем, есть ли стикер для отправки
+        sticker_to_send = None
+        if config.DATABASE_URL and (send_sticker_flag or random.random() < 0.20):
+            sticker_to_send = await db.get_random_sticker()
 
-    try:
+        # 2. Отправляем текст
         if ai_reply:
             sent = await message.reply(ai_reply)
             if config.DATABASE_URL:
                 await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id)
         
-        # Реакции
-        reaction_to_set = explicit_reaction
-        if reaction_to_set:
+        # 3. Выбор: Стикер ИЛИ Реакция
+        if sticker_to_send:
+            # Если есть стикер — отправляем его и ПРОПУСКАЕМ реакцию
+            await asyncio.sleep(1)
+            await bot.send_sticker(chat_id=chat_id, sticker=sticker_to_send, message_thread_id=thread_id)
+        elif explicit_reaction:
+            # Если стикера нет — ставим реакцию (если она есть)
             try:
                 await bot.set_message_reaction(
                     chat_id=chat_id,
                     message_id=msg_id,
-                    reaction=[ReactionTypeEmoji(emoji=reaction_to_set)]
+                    reaction=[ReactionTypeEmoji(emoji=explicit_reaction)]
                 )
             except Exception: pass
 
-        # Стикеры (шанс 20% или по требованию)
-        if (send_sticker_flag or random.random() < 0.20) and config.DATABASE_URL:
-            sid = await db.get_random_sticker()
-            if sid:
-                await asyncio.sleep(1)
-                await bot.send_sticker(chat_id=chat_id, sticker=sid, message_thread_id=thread_id)
-
     except Exception as e:
         logging.error(f"Interaction error: {e}")
+    finally:
+        # === ВЫКЛЮЧЕНИЕ ИНДИКАТОРА (ТОЛЬКО КОГДА ВСЁ ЗАКОНЧИЛОСЬ) ===
+        typing_task.cancel()
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
