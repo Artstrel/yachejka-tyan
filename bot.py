@@ -4,7 +4,7 @@ import sys
 import socket
 import random
 import os
-import re  # <--- ВАЖНО: Добавили библиотеку для регулярных выражений
+import re
 
 # --- FIX IPv4 для Fly.io ---
 try:
@@ -30,17 +30,13 @@ db = Database(config.DATABASE_URL)
 bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 BOT_INFO = None
 
-# --- ФОНОВАЯ ЗАДАЧА "ПЕЧАТАЕТ..." ---
 async def keep_typing(chat_id, bot, sleep_time=4):
-    """Отправляет статус typing каждые 4 секунды."""
     try:
         while True:
             await bot.send_chat_action(chat_id=chat_id, action="typing")
             await asyncio.sleep(sleep_time)
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
+    except asyncio.CancelledError: pass
+    except Exception: pass
 
 async def on_startup(dispatcher: Dispatcher):
     logging.info("🚀 Запуск...")
@@ -64,12 +60,10 @@ async def main_handler(message: types.Message):
     chat_id = message.chat.id
     text = message.text or message.caption or ""
     
-    # Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-    # Фильтры
     is_mentioned = text and f"@{BOT_INFO.username}" in text
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
     is_cmd = text.startswith("/")
@@ -83,7 +77,6 @@ async def main_handler(message: types.Message):
 
     if not should_answer: return
 
-    # Фото
     image_data = None
     if message.photo:
         try:
@@ -95,7 +88,6 @@ async def main_handler(message: types.Message):
             if not text: text = "Что на этом фото?"
         except: pass
 
-    # === ГЕНЕРАЦИЯ ===
     typing_task = asyncio.create_task(keep_typing(chat_id, bot))
     
     try:
@@ -105,35 +97,37 @@ async def main_handler(message: types.Message):
 
     if not ai_reply: return
 
-    # === УЛУЧШЕННАЯ ОБРАБОТКА МУСОРА ===
+    # === ЯДЕРНАЯ ОЧИСТКА ===
     send_sticker_flag = False
 
-    # 1. Ловим тег стикера в любом формате: [STICKER], STICKER, [sticker]
-    # Используем regex для гибкости
+    # 1. Ловим стикер
     sticker_pattern = r"(\[?STICKER\]?)"
-    
     if re.search(sticker_pattern, ai_reply, re.IGNORECASE):
         send_sticker_flag = True
-        # Вырезаем тег из текста
         ai_reply = re.sub(sticker_pattern, "", ai_reply, flags=re.IGNORECASE)
 
-    # 2. Финальная зачистка текста от артефактов
-    ai_reply = ai_reply.strip()
-    # Убираем возможные "User:" или "Bot:", если модель запуталась в ролях
-    ai_reply = re.sub(r"^(Bot|Assistant|Ячейка-тян):\s*", "", ai_reply, flags=re.IGNORECASE)
+    # 2. Удаляем любые префиксы типа "Yachejkatyanbot:", "Bot:", "**Bot**:", "Name:"
+    # (?i) - регистронезависимо
+    # ^ - начало строки
+    # [\*\s]* - возможные звездочки (markdown) или пробелы
+    # (Yachejka...|Bot|...) - варианты имен
+    # [\*\s]* - снова возможные звездочки
+    # :? - возможное двоеточие
+    # \s* - пробелы
+    clean_regex = r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Yachejka|Ячейка-тян|Ячейка|Bot|Assistant|System|Name)[\*\s]*:?\s*"
+    
+    ai_reply = re.sub(clean_regex, "", ai_reply).strip()
 
     try:
-        # Отправляем текст (если он не пустой после чистки)
         if ai_reply:
             sent = await message.reply(ai_reply)
             if config.DATABASE_URL:
                 await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, message.message_thread_id)
         
-        # Отправляем стикер
         if (send_sticker_flag or random.random() < 0.1) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
-                await asyncio.sleep(1) # Небольшая пауза для естественности
+                await asyncio.sleep(1)
                 await bot.send_sticker(chat_id=chat_id, sticker=sid, message_thread_id=message.message_thread_id)
                 
     except Exception as e:
