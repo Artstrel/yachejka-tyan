@@ -41,8 +41,18 @@ async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
     except Exception: pass
 
 async def on_startup(dispatcher: Dispatcher):
-    logging.info("🚀 Запуск...")
-    if config.DATABASE_URL: await db.connect()
+    # === ГЛАВНОЕ ИСПРАВЛЕНИЕ ===
+    # Запускаем сервер СРАЗУ, чтобы Fly.io не убил нас за таймаут
+    start_server() 
+    logging.info("✅ Web server started (health check passed)")
+
+    logging.info("🚀 Запуск бота...")
+    if config.DATABASE_URL: 
+        try:
+            await db.connect()
+        except Exception as e:
+            logging.error(f"⚠️ DB Connect warning: {e}")
+            
     global BOT_INFO
     BOT_INFO = await bot.get_me()
     await bot.set_my_commands([
@@ -51,7 +61,6 @@ async def on_startup(dispatcher: Dispatcher):
         BotCommand(command="events", description="📅 Анонсы"),
         BotCommand(command="models", description="🤖 Модели"),
     ])
-    start_server()
 
 dp.startup.register(on_startup)
 
@@ -102,15 +111,14 @@ async def main_handler(message: types.Message):
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
     
     try:
-        # ОБНОВЛЕНО: Передаем thread_id
+        # Передаем thread_id (логика из прошлого шага сохранена)
         ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
     finally:
         typing_task.cancel()
 
     if not ai_reply: return
 
-    # === УЛУЧШЕННАЯ ОБРАБОТКА ТЕГОВ ===
-    
+    # === ОБРАБОТКА ТЕГОВ ===
     explicit_reaction = None
     reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
     if reaction_match:
@@ -134,7 +142,6 @@ async def main_handler(message: types.Message):
         
         # Реакции
         reaction_to_set = explicit_reaction
-        
         if reaction_to_set:
             try:
                 await bot.set_message_reaction(
@@ -144,8 +151,7 @@ async def main_handler(message: types.Message):
                 )
             except Exception: pass
 
-        # Стикеры
-        # ОБНОВЛЕНО: Шанс случайного стикера повышен до 20%
+        # Стикеры (шанс 20% или по требованию)
         if (send_sticker_flag or random.random() < 0.20) and config.DATABASE_URL:
             sid = await db.get_random_sticker()
             if sid:
