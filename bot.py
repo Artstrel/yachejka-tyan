@@ -39,6 +39,18 @@ bot = Bot(
 )
 BOT_INFO = None
 
+# Добавляем новую функцию для вечного статуса
+async def keep_typing_action(chat_id, bot, sleep_time=4):
+    """Постоянно отправляет статус 'typing', пока задачу не отменят."""
+    try:
+        while True:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+            await asyncio.sleep(sleep_time)
+    except asyncio.CancelledError:
+        pass # Задача отменена, просто выходим
+    except Exception:
+        pass
+
 async def on_startup(dispatcher: Dispatcher):
     logging.info("🚀 Запуск процессов...")
     if config.DATABASE_URL:
@@ -81,6 +93,7 @@ async def main_handler(message: types.Message):
     user_name = message.from_user.first_name if message.from_user else "Anon"
     text = message.text or message.caption or ""
     
+    
     # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
@@ -109,14 +122,14 @@ async def main_handler(message: types.Message):
     if not should_answer:
         return
 
-    # Typing...
-    try: await bot.send_chat_action(chat_id=chat_id, action="typing")
-    except: pass
+ # Запускаем "печатает..." в фоновом режиме
+    typing_task = asyncio.create_task(keep_typing_action(chat_id, bot))
 
     # Фото
     image_data = None
     if message.photo:
         try:
+            # ... (код обработки фото тот же) ...
             photo = message.photo[-1]
             file = await bot.get_file(photo.file_id)
             downloaded = await bot.download_file(file.file_path)
@@ -126,8 +139,12 @@ async def main_handler(message: types.Message):
             if not text: text = "[Photo]"
         except Exception: pass
 
-    # Генерация
-    ai_reply = await generate_response(db, chat_id, text, bot, image_data)
+    try:
+        # Генерация ответа (пока она идет, typing_task работает)
+        ai_reply = await generate_response(db, chat_id, text, bot, image_data)
+    finally:
+        # Как только получили ответ (или ошибку) — отменяем статус
+        typing_task.cancel()
 
     if not ai_reply:
         return
@@ -135,9 +152,6 @@ async def main_handler(message: types.Message):
     try:
         sent_msg = await message.reply(ai_reply)
         
-        if config.DATABASE_URL:
-            asyncio.create_task(db.add_message(chat_id, sent_msg.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id))
-
         # Стикер
         if config.DATABASE_URL and random.random() < 0.3:
             sticker_id = await db.get_random_sticker()
