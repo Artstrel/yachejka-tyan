@@ -13,50 +13,51 @@ client = AsyncOpenAI(
 )
 
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
+# === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
 AVAILABLE_MODELS = {
-    "gemini-flash": {
-        "name": "google/gemini-2.0-flash-001:free",
-        "display_name": "⚡ Gemini 2.0 Flash",
-        "description": "Fastest & Smart",
-        "context": 1000000,
-        "multimodal": True,
-        "priority": 1
-    },
     "deepseek-r1": {
-        "name": "deepseek/deepseek-r1:free",
+        "name": "deepseek/deepseek-r1-0528:free",
         "display_name": "🧠 DeepSeek R1",
         "description": "Reasoning Champion",
         "context": 64000,
         "multimodal": False,
+        "priority": 1
+    },
+    "qwen-coder": {
+        "name": "qwen/qwen-2.5-coder-32b-instruct:free",
+        "display_name": "💻 Qwen Coder 32B",
+        "description": "Best for Coding",
+        "context": 128000,
+        "multimodal": False,
         "priority": 2
     },
-    "qwen-32b": {
-        "name": "qwen/qwen-2.5-32b-instruct:free",
-        "display_name": "🔥 Qwen 2.5 32B",
-        "description": "Powerful & Creative",
-        "context": 128000,
+    "deepseek-v3": {
+        "name": "deepseek/deepseek-chat:free",
+        "display_name": "⚡ DeepSeek V3",
+        "description": "Fast & Smart",
+        "context": 64000,
         "multimodal": False,
         "priority": 3
     },
-    "pixtral": {
-        "name": "mistralai/pixtral-12b:free",
-        "display_name": "👁️ Pixtral 12B",
-        "description": "Vision Expert",
-        "context": 128000,
+    "gemini-flash": {
+        "name": "google/gemini-2.0-flash-exp:free",
+        "display_name": "🌟 Gemini Flash",
+        "description": "Vision & Speed",
+        "context": 1000000,
         "multimodal": True,
         "priority": 4
     },
-    "aurora": {
-        "name": "openrouter/aurora-alpha",
-        "display_name": "🌟 Aurora Alpha",
-        "description": "Reasoning (8B)",
+    "llama-vision": {
+        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "display_name": "👁️ Llama Vision",
+        "description": "Vision Model",
         "context": 128000,
-        "multimodal": False,
+        "multimodal": True,
         "priority": 5
     }
 }
 
-DEFAULT_MODEL_KEY = "gemini-flash"
+DEFAULT_MODEL_KEY = "deepseek-r1"
 
 # === ЛОР (ПАССИВНЫЙ) ===
 TBILISI_LORE = """
