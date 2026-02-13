@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand, ReactionTypeEmoji
+from aiogram.exceptions import TelegramBadRequest
 import config
 from database.db import Database
 from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
@@ -28,6 +29,11 @@ dp = Dispatcher()
 db = Database(config.DATABASE_URL)
 bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 BOT_INFO = None
+
+# Базовый список безопасных реакций (Telegram иногда меняет его, но основные работают)
+SAFE_REACTIONS = {
+    "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷‍♀", "🤷"
+}
 
 async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
     """Показывает индикатор печати"""
@@ -144,7 +150,11 @@ async def main_handler(message: types.Message):
         explicit_reaction = None
         reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
         if reaction_match:
-            explicit_reaction = reaction_match.group(1).strip()
+            raw_reaction = reaction_match.group(1).strip()
+            # Проверяем, есть ли эмодзи в безопасном списке
+            if raw_reaction in SAFE_REACTIONS:
+                explicit_reaction = raw_reaction
+            
             ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
         # 2. Извлекаем флаг стикера
@@ -167,27 +177,30 @@ async def main_handler(message: types.Message):
         
         # Отправляем текст если есть
         if ai_reply:
-            sent_message = await message.reply(ai_reply)
-            if config.DATABASE_URL:
-                await db.add_message(
-                    chat_id, sent_message.message_id, 
-                    BOT_INFO.id, "Bot", 'model', ai_reply, thread_id
-                )
+            try:
+                sent_message = await message.reply(ai_reply)
+                if config.DATABASE_URL:
+                    await db.add_message(
+                        chat_id, sent_message.message_id, 
+                        BOT_INFO.id, "Bot", 'model', ai_reply, thread_id
+                    )
+            except Exception as e:
+                logging.error(f"Failed to send message: {e}")
         
         # Обрабатываем стикер или реакцию
         if send_sticker_flag:
-            # Если явно указан [STICKER] — гарантированно отправляем
             sticker_to_send = await db.get_random_sticker() if config.DATABASE_URL else None
             if sticker_to_send:
                 await asyncio.sleep(0.5)
-                await bot.send_sticker(
-                    chat_id=chat_id,
-                    sticker=sticker_to_send,
-                    message_thread_id=thread_id
-                )
-                logging.info("📎 Sticker sent")
+                try:
+                    await bot.send_sticker(
+                        chat_id=chat_id,
+                        sticker=sticker_to_send,
+                        message_thread_id=thread_id
+                    )
+                    logging.info("📎 Sticker sent")
+                except Exception: pass
         elif explicit_reaction:
-            # Если стикер не отправляли — ставим реакцию
             try:
                 await bot.set_message_reaction(
                     chat_id=chat_id,
@@ -195,6 +208,11 @@ async def main_handler(message: types.Message):
                     reaction=[ReactionTypeEmoji(emoji=explicit_reaction)]
                 )
                 logging.info(f"✨ Reaction set: {explicit_reaction}")
+            except TelegramBadRequest as e:
+                if "REACTION_INVALID" in str(e):
+                    logging.warning(f"⚠️ Invalid reaction ignored: {explicit_reaction}")
+                else:
+                    logging.warning(f"Reaction error: {e}")
             except Exception as e:
                 logging.warning(f"Reaction error: {e}")
 
