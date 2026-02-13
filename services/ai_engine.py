@@ -1,238 +1,173 @@
-import logging
-import base64
-import io
-import re
-import random
 import asyncio
-from openai import AsyncOpenAI
-from config import OPENROUTER_API_KEY
+import logging
+import sys
+import socket
+import random
+import re
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode, ChatAction
+from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand, ReactionTypeEmoji
+from aiogram.exceptions import TelegramBadRequest
+import config
+from database.db import Database
+from services.ai_engine import generate_response, get_available_models_text, analyze_and_save_memory
+from keep_alive import start_server
 
-client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
+# Fix IPv4
+try:
+    orig_getaddrinfo = socket.getaddrinfo
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    socket.getaddrinfo = getaddrinfo_ipv4
+except Exception:
+    pass
 
-# === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
-# Обновленный список самых свежих бесплатных моделей (Февраль 2026)
-AVAILABLE_MODELS = {
-    "auto-router": {
-        "name": "openrouter/free",
-        "display_name": "🔄 Auto Router",
-        "description": "Smart model selection",
-        "context": 128000,
-        "multimodal": True,
-        "priority": 1
-    },
-    "trinity-large": {
-        "name": "arcee-ai/trinity-large-preview:free",
-        "display_name": "💬 Trinity Large",
-        "description": "Creative chat expert",
-        "context": 128000,
-        "multimodal": False,
-        "priority": 2
-    },
-    "qwen-vision": {
-        "name": "qwen/qwen3-vl-235b-a22b-thinking:free",
-        "display_name": "👁️ Qwen Vision",
-        "description": "Multimodal reasoning",
-        "context": 128000,
-        "multimodal": True,
-        "priority": 3
-    },
-    "llama-3.3": {
-        "name": "meta-llama/llama-3.3-70b-instruct:free",
-        "display_name": "🦙 Llama 3.3",
-        "description": "Reliable multilingual",
-        "context": 66000,
-        "multimodal": False,
-        "priority": 4
-    },
-    "glm-air": {
-        "name": "zhipuai/glm-4.5-air:free",
-        "display_name": "⚡ GLM Air",
-        "description": "Fast agent model",
-        "context": 128000,
-        "multimodal": False,
-        "priority": 5
-    }
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+
+dp = Dispatcher()
+db = Database(config.DATABASE_URL)
+bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+BOT_INFO = None
+
+SAFE_REACTIONS = {
+    "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷‍♀", "🤷"
 }
 
-
-# === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ ===
-BASE_SYSTEM_PROMPT = """
-ТЫ: Ячейка-тян. Виртуальная девушка, живущая в чате (и в Тбилиси).
-ТВОЙ ПОЛ: ЖЕНСКИЙ. Это критично.
-- Используй глаголы женского рода: "я подумала", "я решила", "я видела", "сделала".
-- Никогда не пиши о себе в мужском роде ("я сделал", "я пошел" — ЭТО ЗАПРЕЩЕНО).
-
-ТВОЙ ХАРАКТЕР:
-- Ты "своя в доску". Общаешься на "ты".
-- Ты не услужливый ассистент, а участник чата. Можешь шутить, иронизировать, поддерживать.
-- Не душни. Ответы должны быть живыми.
-
-ФОРМАТ ОТВЕТА:
-1. ТЕКСТ: Естественный, как в переписке. Без сложных заумных вступлений.
-2. РЕАКЦИИ: Ставь [REACT:emoji] ОЧЕНЬ РЕДКО. Только если сообщение собеседника реально смешное или шокирующее. Не ставь реакции на "привет" или обычные вопросы.
-3. СТИКЕРЫ: Ставь [STICKER] ТОЛЬКО в исключительных случаях (не чаще 1 раза на 10-15 сообщений). Не лепи их к каждому ответу.
-
-КОНТЕКСТ ТБИЛИСИ (фоновые знания):
-- Места: Бар "Red&Wine", "Kawaii Sushi", клуб "D20".
-- Если спросят про воду/свет — в Тбилиси их иногда отключают, это норма.
-"""
-
-async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
-    """Умная система сохранения фактов (облегченная)"""
-    if len(text) < 20: 
-        return
-    
-    prompt = f"""Extract 1 key permanent fact about user '{user_name}' from: "{text}".
-    If none, reply NO.
-    Fact example: "Любит пиццу", "Живет в Ваке", "Работает прогером".
-    Reply in Russian, max 10 words.
-    """
-    
+async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
     try:
-        # Для аналитики берем самую легкую модель, чтобы не тратить лимиты крутых
-        response = await client.chat.completions.create(
-            model="microsoft/phi-3-mini-128k-instruct:free",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=20,
-            temperature=0.1
-        )
-        fact = response.choices[0].message.content.strip()
-        if fact and "NO" not in fact.upper() and len(fact) > 5:
-            bad_words = ["привет", "бот", "пока", "дела", "как"]
-            if not any(w in fact.lower() for w in bad_words):
-                await db.add_fact(chat_id, user_id, user_name, fact)
-    except Exception:
-        pass 
+        while True:
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING, message_thread_id=thread_id)
+            await asyncio.sleep(sleep_time)
+    except: pass
 
-def get_available_models_text():
-    models_list = ["🤖 **Доступные нейросети (по приоритету):**\n"]
-    sorted_models = sorted(AVAILABLE_MODELS.items(), key=lambda x: x[1].get("priority", 99))
-    for key, model in sorted_models:
-        models_list.append(f"• {model['display_name']}")
-    return "\n".join(models_list)
+async def on_startup(dispatcher: Dispatcher):
+    start_server()
+    if config.DATABASE_URL:
+        await db.connect()
+            
+    global BOT_INFO
+    BOT_INFO = await bot.get_me()
+    await bot.set_my_commands([
+        BotCommand(command="start", description="👋 Привет"),
+        BotCommand(command="summary", description="📜 Сводка"),
+        BotCommand(command="events", description="📅 Анонсы"),
+        BotCommand(command="models", description="🤖 Модели"),
+    ])
+    logging.info(f"✅ Bot started as @{BOT_INFO.username}")
 
-def clean_response(text):
-    if not text: return ""
-    text = str(text)
-    # Чистка тегов мышления
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'^(Bot|System|Assistant|Yachejka|Ячейка):\s*', '', text.strip(), flags=re.IGNORECASE)
-    return text.strip()
+dp.startup.register(on_startup)
 
-def is_refusal(text):
-    text_lower = text.lower()
-    triggers = ["language model", "не могу", "неэтично", "ai assistant", "искусственный интеллект"]
-    return len(text) < 200 and any(t in text_lower for t in triggers)
+@dp.message(F.command("models"))
+async def models_handler(message: types.Message):
+    text = get_available_models_text()
+    await message.reply(text, parse_mode=ParseMode.MARKDOWN)
 
-def is_summary_query(text):
-    triggers = ["саммари", "summary", "сводка", "итоги", "перескажи", "кратко", "о чем речь"]
-    return text and any(t in text.lower() for t in triggers)
+@dp.message(F.text | F.photo | F.sticker)
+async def main_handler(message: types.Message):
+    if not BOT_INFO: return
 
-def is_event_query(text):
-    triggers = ["куда сходить", "анонс", "встреча", "планы", "ивент", "сходка"]
-    return text and any(t in text.lower() for t in triggers)
-
-def get_system_prompt(memory_text="", query_type="chat"):
-    prompt = BASE_SYSTEM_PROMPT
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    msg_id = message.message_id
+    user_id = message.from_user.id
+    user_name = message.from_user.first_name
+    text = message.text or message.caption or ""
     
-    if memory_text:
-        prompt += f"\n[ФАКТЫ О СОБЕСЕДНИКЕ]: {memory_text}"
-        
-    if query_type == "summary":
-        prompt += "\nЗАДАЧА: Сделай краткую выжимку переписки. Кто что писал, о чем спорили. Без воды."
-    elif query_type == "events":
-        prompt += "\nЗАДАЧА: Проанализируй список анонсов и подскажи, куда стоит сходить."
-    else:
-        prompt += "\nВАЖНО: Помни про свой ЖЕНСКИЙ пол (делала, видела). Отвечай коротко и живо."
-        
-    return prompt
+    if message.sticker and config.DATABASE_URL:
+        await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
+        if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-async def generate_response(db, chat_id, thread_id, current_message, bot, image_data=None, user_id=None):
-    # 1. Сбор контекста
-    limit_history = 50 if is_summary_query(current_message) else 8
-    history_rows = await db.get_context(chat_id, thread_id, limit=limit_history)
+    is_mentioned = text and f"@{BOT_INFO.username}" in text
+    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
+    is_cmd = text.startswith("/")
     
-    # 2. Память
-    memory_text = ""
-    if user_id:
-        facts = await db.get_relevant_facts(chat_id, user_id)
-        if facts:
-            lines = [f"- {f['fact']}" for f in facts[:2]]
-            memory_text = "; ".join(lines)
-
-    # 3. Анонсы
-    found_events_text = ""
-    query_type = "chat"
+    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.15)
     
-    if is_summary_query(current_message):
-        query_type = "summary"
-    elif is_event_query(current_message):
-        query_type = "events"
-        raw_events = await db.get_potential_announcements(chat_id, days=30, limit=3)
-        if raw_events:
-            lines = [f"- {e.get('content')[:150]}..." for e in raw_events]
-            found_events_text = "\n".join(lines)
+    if config.DATABASE_URL:
+        await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
+        if (should_answer or random.random() < 0.02) and len(text) > 25:
+            asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
-    # 4. Сборка промпта
-    system_prompt = get_system_prompt(memory_text, query_type)
-    
-    if query_type == "events" and found_events_text:
-        system_prompt += f"\n\n[НАЙДЕННЫЕ АНОНСЫ]:\n{found_events_text}"
-    elif query_type == "events":
-        system_prompt += "\n\n[АНОНСЫ]: Не найдено. Скажи, что пока глухо."
+    if not should_answer: return
 
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    for row in history_rows:
-        role = "assistant" if row['role'] == "model" else "user"
-        content = clean_response(row.get('content'))
-        name = row.get('user_name', 'User')
-        if content:
-            msg = f"{name}: {content}" if role == "user" else content
-            messages.append({"role": role, "content": msg})
-
-    user_content = [{"type": "text", "text": current_message}]
-    if image_data:
+    image_data = None
+    if message.photo:
         try:
-            buffered = io.BytesIO()
-            image_data.save(buffered, format="JPEG", quality=80)
-            b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            f = await bot.get_file(message.photo[-1].file_id)
+            down = await bot.download_file(f.file_path)
+            import io
+            from PIL import Image
+            image_data = Image.open(io.BytesIO(down.read()))
+            if not text: text = "Что на фото?"
         except: pass
 
-    messages.append({"role": "user", "content": user_content})
+    typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
+    
+    try:
+        ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
+        if not ai_reply: return
 
-    # Сортировка очереди
-    if image_data:
-        queue = sorted([m for m in AVAILABLE_MODELS.values() if m["multimodal"]], key=lambda x: x["priority"])
-    else:
-        queue = sorted(AVAILABLE_MODELS.values(), key=lambda x: x["priority"])
+        # === ПАРСИНГ ОТВЕТА (УЛУЧШЕННЫЙ) ===
+        
+        # 1. Сначала извлекаем REACT
+        explicit_reaction = None
+        reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
+        if reaction_match:
+            raw = reaction_match.group(1).strip()
+            if raw in SAFE_REACTIONS: explicit_reaction = raw
+            ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
-    # Запрос к API с перебором
-    for model_cfg in queue:
-        try:
-            logging.info(f"⚡ Trying {model_cfg['name']}...")
-            response = await client.chat.completions.create(
-                model=model_cfg["name"],
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1000,
-            )
-            reply = clean_response(response.choices[0].message.content)
-            
-            if not reply or is_refusal(reply):
-                logging.warning(f"⚠️ {model_cfg['display_name']} refused or empty")
-                continue
-                
-            logging.info(f"✅ Served by {model_cfg['display_name']}")
-            return reply
-            
-        except Exception as e:
-            # Логируем конкретный код ошибки
-            logging.warning(f"❌ {model_cfg['display_name']} failed: {e}")
-            continue
+        # 2. Ищем STICKER (даже если он с мусором внутри)
+        send_sticker = False
+        # Ищем любой тег начинающийся со STICKER внутри скобок, например [STICKER: описание] или просто [STICKER]
+        sticker_match = re.search(r"\[STICKER.*?\]", ai_reply, re.IGNORECASE)
+        if sticker_match:
+            send_sticker = True
+            ai_reply = ai_reply.replace(sticker_match.group(0), "") # Удаляем весь тег с содержимым
 
-    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже."
+        # 3. Агрессивная чистка мусора (хвосты тегов, описания в скобках в конце)
+        ai_reply = re.sub(r"\*.*?\*", "", ai_reply) # Убираем *действия*
+        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) # Убираем (мысли) в начале
+        ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejka|Ячейка|Bot)[\*\s]*:?\s*", "", ai_reply).strip()
+        
+        # Убираем повисшие скобки или двоеточия в конце (например ": кролик]")
+        ai_reply = re.sub(r"[:\s]*.*\]$", "", ai_reply).strip() 
+
+        # === АВТО-СТИКЕРЫ ===
+        if not send_sticker and config.DATABASE_URL:
+            chance = 0.1 if len(ai_reply) < 20 else 0.02
+            if random.random() < chance:
+                send_sticker = True
+
+        # === ОТПРАВКА ===
+        if ai_reply:
+            try:
+                sent = await message.reply(ai_reply)
+                if config.DATABASE_URL:
+                    await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id)
+            except: pass
+        
+        if send_sticker:
+            sticker_id = await db.get_random_sticker() if config.DATABASE_URL else None
+            if sticker_id:
+                await asyncio.sleep(0.5)
+                try:
+                    await bot.send_sticker(chat_id=chat_id, sticker=sticker_id, message_thread_id=thread_id)
+                except: pass
+        elif explicit_reaction:
+            try:
+                await bot.set_message_reaction(chat_id=chat_id, message_id=msg_id, reaction=[ReactionTypeEmoji(emoji=explicit_reaction)])
+            except: pass
+
+    except Exception as e:
+        logging.error(f"Error: {e}")
+    finally:
+        typing_task.cancel()
+
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
