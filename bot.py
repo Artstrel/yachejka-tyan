@@ -30,7 +30,6 @@ db = Database(config.DATABASE_URL)
 bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 BOT_INFO = None
 
-# Безопасные реакции
 SAFE_REACTIONS = {
     "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷‍♀", "🤷"
 }
@@ -75,7 +74,7 @@ async def main_handler(message: types.Message):
     user_name = message.from_user.first_name
     text = message.text or message.caption or ""
     
-    # 1. Сохраняем стикеры в базу (чтобы боту было чем отвечать)
+    # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
@@ -87,10 +86,11 @@ async def main_handler(message: types.Message):
     
     should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.15)
     
-    # 3. Сохранение и анализ (редкий, чтобы не словить лимит)
+    # 3. Сохранение и анализ
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
-        if (should_answer or random.random() < 0.05) and len(text) > 20:
+        # Уменьшил шанс аналитики до 2% и только для длинных сообщений, чтобы не ловить 429
+        if (should_answer or random.random() < 0.02) and len(text) > 25:
             asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
     if not should_answer: return
@@ -129,19 +129,16 @@ async def main_handler(message: types.Message):
             send_sticker = True
             ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-        # Очистка мусора
+        # Очистка
         ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
         ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply)
         ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejka|Ячейка|Bot)[\*\s]*:?\s*", "", ai_reply).strip()
 
-        # === ЛОГИКА "ФОРС-МАЖОР" СТИКЕРОВ ===
-        # Если ИИ не попросил стикер, но ответ короткий или нам просто повезло - кидаем стикер
+        # === АВТО-СТИКЕРЫ ===
         if not send_sticker and config.DATABASE_URL:
-            # Шанс 15% для всех ответов, 30% если ответ короче 50 символов
             chance = 0.3 if len(ai_reply) < 50 else 0.15
             if random.random() < chance:
                 send_sticker = True
-                logging.info("🎲 Auto-sticker triggered")
 
         # === ОТПРАВКА ===
         if ai_reply:
