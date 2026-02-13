@@ -30,37 +30,22 @@ db = Database(config.DATABASE_URL)
 bot = Bot(token=config.TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 BOT_INFO = None
 
-# Базовый список безопасных реакций (Telegram иногда меняет его, но основные работают)
+# Безопасные реакции
 SAFE_REACTIONS = {
     "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷‍♀", "🤷"
 }
 
 async def keep_typing(chat_id, bot, thread_id=None, sleep_time=4):
-    """Показывает индикатор печати"""
     try:
         while True:
-            await bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=thread_id
-            )
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING, message_thread_id=thread_id)
             await asyncio.sleep(sleep_time)
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
+    except: pass
 
 async def on_startup(dispatcher: Dispatcher):
-    """Инициализация при старте бота"""
     start_server()
-    logging.info("✅ Web server started (health check passed)")
-
-    logging.info("🚀 Запуск бота...")
     if config.DATABASE_URL:
-        try:
-            await db.connect()
-        except Exception as e:
-            logging.error(f"⚠️ DB Connect warning: {e}")
+        await db.connect()
             
     global BOT_INFO
     BOT_INFO = await bot.get_me()
@@ -70,22 +55,18 @@ async def on_startup(dispatcher: Dispatcher):
         BotCommand(command="events", description="📅 Анонсы"),
         BotCommand(command="models", description="🤖 Модели"),
     ])
-    
     logging.info(f"✅ Bot started as @{BOT_INFO.username}")
 
 dp.startup.register(on_startup)
 
 @dp.message(F.command("models"))
 async def models_handler(message: types.Message):
-    """Обработчик команды /models"""
     text = get_available_models_text()
     await message.reply(text, parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(F.text | F.photo | F.sticker)
 async def main_handler(message: types.Message):
-    """Основной обработчик сообщений"""
-    if not BOT_INFO:
-        return
+    if not BOT_INFO: return
 
     chat_id = message.chat.id
     thread_id = message.message_thread_id
@@ -94,36 +75,27 @@ async def main_handler(message: types.Message):
     user_name = message.from_user.first_name
     text = message.text or message.caption or ""
     
-    # Обработка стикеров
+    # 1. Сохраняем стикеры в базу (чтобы боту было чем отвечать)
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
-        if not text:
-            text = f"[Sticker {message.sticker.emoji}]"
+        if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-    # Определяем, нужно ли отвечать
+    # 2. Логика ответа
     is_mentioned = text and f"@{BOT_INFO.username}" in text
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
     is_cmd = text.startswith("/")
-    chance = 0.15
-
-    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < chance)
     
-    # Сохраняем сообщение в БД
+    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.15)
+    
+    # 3. Сохранение и анализ (редкий, чтобы не словить лимит)
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
-        
-        # Асинхронно анализируем и сохраняем факты
-        # ОПТИМИЗАЦИЯ: Чтобы не получать Error 429, запускаем анализ редко:
-        # 1. Если бот решил ответить (should_answer)
-        # 2. ИЛИ с шансом 5% для обычных сообщений
-        # 3. И только если текст длиннее 20 символов
         if (should_answer or random.random() < 0.05) and len(text) > 20:
             asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
-    if not should_answer:
-        return
+    if not should_answer: return
 
-    # Обработка изображений
+    # 4. Обработка фото
     image_data = None
     if message.photo:
         try:
@@ -132,104 +104,71 @@ async def main_handler(message: types.Message):
             import io
             from PIL import Image
             image_data = Image.open(io.BytesIO(down.read()))
-            if not text:
-                text = "Что на этом фото?"
-        except Exception as e:
-            logging.error(f"Image download error: {e}")
+            if not text: text = "Что на фото?"
+        except: pass
 
-    # Запускаем индикатор печати
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
     
     try:
-        # Генерируем ответ
-        ai_reply = await generate_response(
-            db, chat_id, thread_id, text, bot, 
-            image_data, user_id=user_id
-        )
-        
-        if not ai_reply:
-            return
+        ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
+        if not ai_reply: return
 
-        # === ОБРАБОТКА ТЕГОВ ===
+        # === ПАРСИНГ ОТВЕТА ===
         
-        # 1. Извлекаем реакцию
+        # Реакции
         explicit_reaction = None
         reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
         if reaction_match:
-            raw_reaction = reaction_match.group(1).strip()
-            # Проверяем, есть ли эмодзи в безопасном списке
-            if raw_reaction in SAFE_REACTIONS:
-                explicit_reaction = raw_reaction
-            
+            raw = reaction_match.group(1).strip()
+            if raw in SAFE_REACTIONS: explicit_reaction = raw
             ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
-        # 2. Извлекаем флаг стикера
-        send_sticker_flag = False
+        # Стикеры (ИИ попросил)
+        send_sticker = False
         if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
-            send_sticker_flag = True
+            send_sticker = True
             ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
 
-        # 3. Очищаем ответ от артефактов
-        ai_reply = re.sub(r"\*.*?\*", "", ai_reply)  # Убираем *action*
-        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply)  # Убираем (мысли)
-        ai_reply = re.sub(
-            r"(?i)^[\*\s]*(Yachejkatyanbot|Yachejka-tyan|Bot|Assistant|System|Name|Ячейка)[\*\s]*:?\s*",
-            "", ai_reply
-        ).strip()
+        # Очистка мусора
+        ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
+        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply)
+        ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejka|Ячейка|Bot)[\*\s]*:?\s*", "", ai_reply).strip()
 
-        # === ОТПРАВКА ОТВЕТА ===
-        
-        sent_message = None
-        
-        # Отправляем текст если есть
+        # === ЛОГИКА "ФОРС-МАЖОР" СТИКЕРОВ ===
+        # Если ИИ не попросил стикер, но ответ короткий или нам просто повезло - кидаем стикер
+        if not send_sticker and config.DATABASE_URL:
+            # Шанс 15% для всех ответов, 30% если ответ короче 50 символов
+            chance = 0.3 if len(ai_reply) < 50 else 0.15
+            if random.random() < chance:
+                send_sticker = True
+                logging.info("🎲 Auto-sticker triggered")
+
+        # === ОТПРАВКА ===
         if ai_reply:
             try:
-                sent_message = await message.reply(ai_reply)
+                sent = await message.reply(ai_reply)
                 if config.DATABASE_URL:
-                    await db.add_message(
-                        chat_id, sent_message.message_id, 
-                        BOT_INFO.id, "Bot", 'model', ai_reply, thread_id
-                    )
-            except Exception as e:
-                logging.error(f"Failed to send message: {e}")
+                    await db.add_message(chat_id, sent.message_id, BOT_INFO.id, "Bot", 'model', ai_reply, thread_id)
+            except: pass
         
-        # Обрабатываем стикер или реакцию
-        if send_sticker_flag:
-            sticker_to_send = await db.get_random_sticker() if config.DATABASE_URL else None
-            if sticker_to_send:
+        if send_sticker:
+            sticker_id = await db.get_random_sticker() if config.DATABASE_URL else None
+            if sticker_id:
                 await asyncio.sleep(0.5)
                 try:
-                    await bot.send_sticker(
-                        chat_id=chat_id,
-                        sticker=sticker_to_send,
-                        message_thread_id=thread_id
-                    )
-                    logging.info("📎 Sticker sent")
-                except Exception: pass
+                    await bot.send_sticker(chat_id=chat_id, sticker=sticker_id, message_thread_id=thread_id)
+                except: pass
         elif explicit_reaction:
             try:
-                await bot.set_message_reaction(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    reaction=[ReactionTypeEmoji(emoji=explicit_reaction)]
-                )
-                logging.info(f"✨ Reaction set: {explicit_reaction}")
-            except TelegramBadRequest as e:
-                if "REACTION_INVALID" in str(e):
-                    logging.warning(f"⚠️ Invalid reaction ignored: {explicit_reaction}")
-                else:
-                    logging.warning(f"Reaction error: {e}")
-            except Exception as e:
-                logging.warning(f"Reaction error: {e}")
+                await bot.set_message_reaction(chat_id=chat_id, message_id=msg_id, reaction=[ReactionTypeEmoji(emoji=explicit_reaction)])
+            except: pass
 
     except Exception as e:
-        logging.error(f"Interaction error: {e}")
+        logging.error(f"Error: {e}")
     finally:
-        # Выключаем индикатор печати
         typing_task.cancel()
 
 async def main():
-    """Точка входа"""
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
