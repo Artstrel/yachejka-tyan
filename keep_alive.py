@@ -1,5 +1,11 @@
 import threading
+import time
+import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.request
+
+# Настройка логирования для этого модуля
+logging.basicConfig(level=logging.INFO)
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -13,10 +19,29 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
     
     def log_message(self, format, *args):
-        pass  # Отключаем логи
+        pass  # Чтобы не засорять консоль логами пингов
+
+def pinger():
+    """Фоновый процесс, который пингует сервер сам себя"""
+    while True:
+        try:
+            time.sleep(300)  # Пинг каждые 5 минут (300 секунд)
+            url = "http://127.0.0.1:8080/health"
+            with urllib.request.urlopen(url) as response:
+                if response.getcode() == 200:
+                    pass # Все ок, молчим
+        except Exception as e:
+            logging.warning(f"Self-ping warning: {e}")
 
 def start_server():
-    """Запускает минималистичный HTTP сервер для health check"""
+    """Запускает HTTP сервер и фоновый пингер"""
+    # 1. Запуск сервера
     server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    
+    # 2. Запуск пингера (чтобы процесс не считался idle)
+    ping_thread = threading.Thread(target=pinger, daemon=True)
+    ping_thread.start()
+    
+    logging.info("✅ Keep-alive server + Pinger started on :8080")
