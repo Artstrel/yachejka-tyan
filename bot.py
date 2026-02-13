@@ -111,8 +111,14 @@ async def main_handler(message: types.Message):
     # Сохраняем сообщение в БД
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
+        
         # Асинхронно анализируем и сохраняем факты
-        asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
+        # ОПТИМИЗАЦИЯ: Чтобы не получать Error 429, запускаем анализ редко:
+        # 1. Если бот решил ответить (should_answer)
+        # 2. ИЛИ с шансом 5% для обычных сообщений
+        # 3. И только если текст длиннее 20 символов
+        if (should_answer or random.random() < 0.05) and len(text) > 20:
+            asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
     if not should_answer:
         return
