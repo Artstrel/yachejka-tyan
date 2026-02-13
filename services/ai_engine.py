@@ -13,54 +13,83 @@ client = AsyncOpenAI(
 )
 
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
-# Обновленный список самых свежих бесплатных моделей (Февраль 2026)
+# Оптимизированные free-модели для лучшей точности и скорости
 AVAILABLE_MODELS = {
-    # САМЫЕ МОЩНЫЕ И СВЕЖИЕ
-    "gemini-2-pro-exp": {
-        "name": "google/gemini-2.0-pro-exp-02-05:free",  # Новейшая
-        "display_name": "✨ Gemini 2.0 Pro Exp",
-        "description": "Smartest Free Model",
-        "context": 1000000,
-        "multimodal": True,
-        "priority": 1
-    },
-    "gemini-2-flash-thinking": {
-        "name": "google/gemini-2.0-flash-thinking-exp:free", # Думающая модель
-        "display_name": "🧠 Gemini Flash Thinking",
-        "description": "Reasoning & Smart",
-        "context": 1000000,
-        "multimodal": True,
-        "priority": 2
-    },
-    
-    # СТАБИЛЬНЫЕ РЕЗЕРВЫ (Llama / Mistral / Phi)
-    "llama-3-8b": {
-        "name": "meta-llama/llama-3-8b-instruct:free",
-        "display_name": "🦙 Llama 3 8B",
-        "description": "Fast & Reliable",
-        "context": 8192,
-        "multimodal": False,
-        "priority": 3
-    },
-    "phi-3-mini": {
-        "name": "microsoft/phi-3-mini-128k-instruct:free",
-        "display_name": "🦐 Phi-3 Mini",
-        "description": "Super Fast Fallback",
+    # --- ОСНОВНЫЕ БЫСТРЫЕ ТЕКСТОВЫЕ ---
+    "aurora-alpha": {
+        "name": "openrouter/aurora-alpha",
+        "display_name": "🚀 Aurora Alpha",
+        "description": "Fast conversational + coding (10.7B, 128K ctx)",
         "context": 128000,
         "multimodal": False,
-        "priority": 4
+        "priority": 1,  # ОСНОВНАЯ для повседневного чата
+    },
+    "step-flash": {
+        "name": "stepfun/step-3.5-flash:free",
+        "display_name": "⚡ Step 3.5 Flash",
+        "description": "Complex queries, ultra-fast (182B MoE, 256K ctx)",
+        "context": 256000,
+        "multimodal": False,
+        "priority": 2,  # для сложных запросов
     },
     
-    # ЭКСПЕРИМЕНТАЛЬНЫЕ / ТЯЖЕЛЫЕ (могут 404, но пробуем последними)
+    # --- УМНАЯ REASONING МОДЕЛЬ ---
+    "trinity-large": {
+        "name": "arcee-ai/trinity-large-preview:free",
+        "display_name": "🧠 Trinity Large",
+        "description": "Creative chat & roleplay (437B MoE, 131K ctx)",
+        "context": 131000,
+        "multimodal": False,
+        "priority": 3,  # для креатива и сложных диалогов
+    },
+    
+    # --- ЛЕГКОВЕСНЫЕ ЗАПАСНЫЕ ---
+    "lfm-thinking": {
+        "name": "liquid/lfm-2.5-1.2b-thinking:free",
+        "display_name": "💡 LFM Thinking",
+        "description": "Fast reasoning fallback (1.2B, 33K ctx)",
+        "context": 33000,
+        "multimodal": False,
+        "priority": 4,
+    },
+    "lfm-instruct": {
+        "name": "liquid/lfm-2.5-1.2b-instruct:free",
+        "display_name": "⚡ LFM Instruct",
+        "description": "Ultra-fast simple tasks (1.2B, 33K ctx)",
+        "context": 33000,
+        "multimodal": False,
+        "priority": 5,
+    },
+
+    # --- МУЛЬТИМОДАЛЬНЫЕ (для фото/стикеров) ---
+    "qwen-vl-thinking": {
+        "name": "qwen/qwen3-vl-235b-a22b-thinking",
+        "display_name": "👁️ Qwen3 VL Thinking",
+        "description": "Vision + reasoning (235B, 131K ctx)",
+        "context": 131000,
+        "multimodal": True,
+        "priority": 1,
+    },
+    "llama-vision": {
+        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "display_name": "👁️ Llama Vision",
+        "description": "Vision backup (11B, 128K ctx)",
+        "context": 128000,
+        "multimodal": True,
+        "priority": 2,
+    },
+
+    # --- REASONING ДЛЯ САММАРИ ---
     "deepseek-r1": {
         "name": "deepseek/deepseek-r1:free",
         "display_name": "🐌 DeepSeek R1",
-        "description": "Deep Reasoning",
+        "description": "Slow but strong reasoning (64K ctx)",
         "context": 64000,
         "multimodal": False,
-        "priority": 10
-    }
+        "priority": 6,  # последний резерв
+    },
 }
+
 
 # === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ ===
 BASE_SYSTEM_PROMPT = """
