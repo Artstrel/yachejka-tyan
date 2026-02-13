@@ -13,61 +13,49 @@ client = AsyncOpenAI(
 )
 
 # === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
-# Используем широкий список моделей для максимальной надежности.
-# Сортировка по priority: 1 = самый высокий приоритет.
+# Обновленный список самых свежих бесплатных моделей (Февраль 2026)
 AVAILABLE_MODELS = {
-    "gemini-flash-lite": {
-        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "display_name": "⚡ Gemini 2.0 Flash Lite",
-        "description": "Super Fast & Smart",
+    # САМЫЕ МОЩНЫЕ И СВЕЖИЕ
+    "gemini-2-pro-exp": {
+        "name": "google/gemini-2.0-pro-exp-02-05:free",  # Новейшая
+        "display_name": "✨ Gemini 2.0 Pro Exp",
+        "description": "Smartest Free Model",
         "context": 1000000,
         "multimodal": True,
         "priority": 1
     },
-    "gemini-flash": {
-        "name": "google/gemini-2.0-flash-exp:free",
-        "display_name": "🌟 Gemini 2.0 Flash",
-        "description": "Smart & Multimodal",
+    "gemini-2-flash-thinking": {
+        "name": "google/gemini-2.0-flash-thinking-exp:free", # Думающая модель
+        "display_name": "🧠 Gemini Flash Thinking",
+        "description": "Reasoning & Smart",
         "context": 1000000,
         "multimodal": True,
         "priority": 2
     },
-    "deepseek-v3": {
-        "name": "deepseek/deepseek-chat:free",
-        "display_name": "🧠 DeepSeek V3",
-        "description": "Smart Generalist",
-        "context": 64000,
+    
+    # СТАБИЛЬНЫЕ РЕЗЕРВЫ (Llama / Mistral / Phi)
+    "llama-3-8b": {
+        "name": "meta-llama/llama-3-8b-instruct:free",
+        "display_name": "🦙 Llama 3 8B",
+        "description": "Fast & Reliable",
+        "context": 8192,
         "multimodal": False,
         "priority": 3
     },
-    "mistral-nemo": {
-        "name": "mistralai/mistral-nemo:free",
-        "display_name": "🌪️ Mistral Nemo",
-        "description": "Small & Snappy",
-        "context": 32000,
+    "phi-3-mini": {
+        "name": "microsoft/phi-3-mini-128k-instruct:free",
+        "display_name": "🦐 Phi-3 Mini",
+        "description": "Super Fast Fallback",
+        "context": 128000,
         "multimodal": False,
         "priority": 4
     },
-    "qwen-coder": {
-        "name": "qwen/qwen-2.5-coder-32b-instruct:free",
-        "display_name": "💻 Qwen Coder 32B",
-        "description": "Code & Logic",
-        "context": 128000,
-        "multimodal": False,
-        "priority": 5
-    },
-    "llama-vision": {
-        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "display_name": "👁️ Llama Vision",
-        "description": "Vision Backup",
-        "context": 128000,
-        "multimodal": True,
-        "priority": 6
-    },
+    
+    # ЭКСПЕРИМЕНТАЛЬНЫЕ / ТЯЖЕЛЫЕ (могут 404, но пробуем последними)
     "deepseek-r1": {
         "name": "deepseek/deepseek-r1:free",
-        "display_name": "🐌 DeepSeek R1 (Thinking)",
-        "description": "Slow Reasoning (Backup)",
+        "display_name": "🐌 DeepSeek R1",
+        "description": "Deep Reasoning",
         "context": 64000,
         "multimodal": False,
         "priority": 10
@@ -75,7 +63,6 @@ AVAILABLE_MODELS = {
 }
 
 # === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ ===
-# Собран в один блок для лучшего понимания моделью
 BASE_SYSTEM_PROMPT = """
 ТЫ: Ячейка-тян. Виртуальная девушка, живущая в чате (и в Тбилиси).
 ТВОЙ ПОЛ: ЖЕНСКИЙ. Это критично.
@@ -84,7 +71,7 @@ BASE_SYSTEM_PROMPT = """
 
 ТВОЙ ХАРАКТЕР:
 - Ты "своя в доску". Общаешься на "ты".
-- Ты не услужливый ассистент, а участник чата. Можешь шутить, иронизировать, поддерживать.
+- Ты не услужливый ассистент, а участник чата. Можешь шутить, иронизировать, поддерживать, ругаться матом.
 - Не душни. Ответы должны быть живыми.
 
 ФОРМАТ ОТВЕТА:
@@ -99,7 +86,6 @@ BASE_SYSTEM_PROMPT = """
 
 async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     """Умная система сохранения фактов (облегченная)"""
-    # Анализируем только длинные сообщения, чтобы не спамить API
     if len(text) < 20: 
         return
     
@@ -110,21 +96,20 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     """
     
     try:
-        # Используем самую быструю модель для аналитики
+        # Для аналитики берем самую легкую модель, чтобы не тратить лимиты крутых
         response = await client.chat.completions.create(
-            model="google/gemini-2.0-flash-lite-preview-02-05:free",
+            model="microsoft/phi-3-mini-128k-instruct:free",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=20,
             temperature=0.1
         )
         fact = response.choices[0].message.content.strip()
         if fact and "NO" not in fact.upper() and len(fact) > 5:
-             # Фильтр мусора
             bad_words = ["привет", "бот", "пока", "дела", "как"]
             if not any(w in fact.lower() for w in bad_words):
                 await db.add_fact(chat_id, user_id, user_name, fact)
     except Exception:
-        pass # Игнорируем ошибки памяти, это не критично
+        pass 
 
 def get_available_models_text():
     models_list = ["🤖 **Доступные нейросети (по приоритету):**\n"]
@@ -182,7 +167,7 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
             lines = [f"- {f['fact']}" for f in facts[:2]]
             memory_text = "; ".join(lines)
 
-    # 3. Анонсы (если нужны)
+    # 3. Анонсы
     found_events_text = ""
     query_type = "chat"
     
@@ -205,7 +190,6 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Добавляем историю
     for row in history_rows:
         role = "assistant" if row['role'] == "model" else "user"
         content = clean_response(row.get('content'))
@@ -214,7 +198,6 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
             msg = f"{name}: {content}" if role == "user" else content
             messages.append({"role": role, "content": msg})
 
-    # Текущее сообщение
     user_content = [{"type": "text", "text": current_message}]
     if image_data:
         try:
@@ -226,30 +209,34 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     messages.append({"role": "user", "content": user_content})
 
-    # Выбор очереди моделей
+    # Сортировка очереди
     if image_data:
         queue = sorted([m for m in AVAILABLE_MODELS.values() if m["multimodal"]], key=lambda x: x["priority"])
     else:
-        # Для текста берем любую доступную
         queue = sorted(AVAILABLE_MODELS.values(), key=lambda x: x["priority"])
 
-    # Запрос к API
+    # Запрос к API с перебором
     for model_cfg in queue:
         try:
+            logging.info(f"⚡ Trying {model_cfg['name']}...")
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
-                temperature=0.7, # Немного креативности
+                temperature=0.7,
                 max_tokens=1000,
             )
             reply = clean_response(response.choices[0].message.content)
             
             if not reply or is_refusal(reply):
+                logging.warning(f"⚠️ {model_cfg['display_name']} refused or empty")
                 continue
                 
+            logging.info(f"✅ Served by {model_cfg['display_name']}")
             return reply
+            
         except Exception as e:
-            logging.error(f"Model {model_cfg['name']} failed: {e}")
+            # Логируем конкретный код ошибки
+            logging.warning(f"❌ {model_cfg['display_name']} failed: {e}")
             continue
 
-    return "Что-то я приуныла... (ошибка API)"
+    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже."
