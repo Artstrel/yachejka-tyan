@@ -14,52 +14,66 @@ client = AsyncOpenAI(
 
 # === АКТУАЛЬНЫЕ БЕСПЛАТНЫЕ МОДЕЛИ (Февраль 2026) ===
 
-# Vision модели (с поддержкой изображений)
+# Vision модели (ВСЕ доступные бесплатные с vision)
 VISION_MODELS = {
-    "llama-maverick": {
-        "name": "meta-llama/llama-4-maverick:free",
-        "display_name": "🦙 Llama 4 Maverick",
-        "description": "400B MoE с vision, 256k контекст",
-        "context": 256000,
+    "qwen3-vl-thinking": {
+        "name": "qwen/qwen3-vl-235b-a22b-thinking",
+        "display_name": "👁️ Qwen3 VL Thinking",
+        "description": "235B MoE multimodal, лучшая для vision reasoning",
+        "context": 131000,
         "priority": 1
+    },
+    "nvidia-vl": {
+        "name": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "display_name": "🟢 NVIDIA Nemotron VL",
+        "description": "12B multimodal, OCR + video + документы",
+        "context": 128000,
+        "priority": 2
     },
     "aurora-alpha": {
         "name": "openrouter/aurora-alpha",
         "display_name": "🌟 Aurora Alpha",
-        "description": "Reasoning модель для vision",
-        "context": 128000,
-        "priority": 2
-    },
-    "qwen3-vision": {
-        "name": "qwen/qwen3-235b-instruct:free",
-        "display_name": "👁️ Qwen3 235B",
-        "description": "Мультимодальная reasoning модель",
+        "description": "Reasoning модель с vision",
         "context": 128000,
         "priority": 3
+    },
+    "qwen3-235b": {
+        "name": "qwen/qwen3-235b-a22b-thinking-2507",
+        "display_name": "🧠 Qwen3 235B Thinking",
+        "description": "235B MoE reasoning (поддержка vision в бете)",
+        "context": 131000,
+        "priority": 4
+    },
+    "trinity-large": {
+        "name": "arcee-ai/trinity-large-preview:free",
+        "display_name": "🧠 Trinity Large",
+        "description": "400B MoE, запасная для текста+vision",
+        "context": 131000,
+        "priority": 5
     }
 }
 
 # Модели для суммаризации
 SUMMARIZATION_MODELS = {
-    "mimo-flash": {
-        "name": "xiaomi/mimo-v2-flash:free",
-        "display_name": "⚡ MiMo V2 Flash",
-        "description": "309B MoE, 256k контекст",
-        "context": 256000,
-        "priority": 1
-    },
     "trinity-large": {
         "name": "arcee-ai/trinity-large-preview:free",
         "display_name": "🧠 Trinity Large",
         "description": "400B MoE, 512k контекст",
         "context": 131000,
+        "priority": 1
+    },
+    "deepseek-r1": {
+        "name": "deepseek/deepseek-r1-0528:free",
+        "display_name": "🐋 DeepSeek R1",
+        "description": "671B reasoning, уровень OpenAI o1",
+        "context": 164000,
         "priority": 2
     },
-    "deepseek-chimera": {
-        "name": "deepseek/deepseek-r1t-chimera:free",
-        "display_name": "🐋 DeepSeek Chimera",
-        "description": "Reasoning + эффективность V3",
-        "context": 64000,
+    "qwen3-235b-thinking": {
+        "name": "qwen/qwen3-235b-a22b-thinking-2507",
+        "display_name": "🧠 Qwen3 235B",
+        "description": "235B MoE reasoning",
+        "context": 131000,
         "priority": 3
     },
     "step-flash": {
@@ -69,71 +83,78 @@ SUMMARIZATION_MODELS = {
         "context": 256000,
         "priority": 4
     },
+    "gpt-oss-120b": {
+        "name": "openai/gpt-oss-120b:free",
+        "display_name": "🤖 GPT OSS 120B",
+        "description": "OpenAI open-weight MoE",
+        "context": 131000,
+        "priority": 5
+    },
     "solar-pro": {
         "name": "upstage/solar-pro-3:free",
         "display_name": "☀️ Solar Pro 3",
         "description": "102B MoE для текста",
         "context": 128000,
-        "priority": 5
-    },
-    "devstral": {
-        "name": "mistralai/devstral-2-2512:free",
-        "display_name": "🔧 Devstral 2",
-        "description": "123B агентная модель",
-        "context": 128000,
         "priority": 6
+    },
+    "llama-33-70b": {
+        "name": "meta-llama/llama-3.3-70b-instruct:free",
+        "display_name": "🦙 Llama 3.3 70B",
+        "description": "Meta multilingual модель",
+        "context": 128000,
+        "priority": 7
     }
 }
 
 # Быстрые модели для чата
 FAST_MODELS = {
-    "mimo-flash-chat": {
-        "name": "xiaomi/mimo-v2-flash:free",
-        "display_name": "⚡ MiMo V2 Flash",
-        "description": "Топовая для быстрых ответов",
-        "context": 256000,
-        "priority": 1
-    },
     "aurora-alpha-chat": {
         "name": "openrouter/aurora-alpha",
         "display_name": "🌟 Aurora Alpha",
-        "description": "Reasoning для чата",
+        "description": "Reasoning для быстрого чата",
         "context": 128000,
-        "priority": 2
+        "priority": 1
     },
     "trinity-large-chat": {
         "name": "arcee-ai/trinity-large-preview:free",
         "display_name": "🧠 Trinity Large",
-        "description": "Для сложных задач",
+        "description": "400B MoE для сложных задач",
         "context": 131000,
-        "priority": 3
+        "priority": 2
     },
-    "deepseek-chimera-chat": {
-        "name": "deepseek/deepseek-r1t-chimera:free",
-        "display_name": "🐋 DeepSeek Chimera",
-        "description": "Balanced reasoning",
-        "context": 64000,
-        "priority": 4
+    "deepseek-r1-chat": {
+        "name": "deepseek/deepseek-r1-0528:free",
+        "display_name": "🐋 DeepSeek R1",
+        "description": "671B reasoning",
+        "context": 164000,
+        "priority": 3
     },
     "step-flash-chat": {
         "name": "stepfun/step-3.5-flash:free",
         "display_name": "💨 Step Flash",
         "description": "MoE с 11B активных",
         "context": 256000,
+        "priority": 4
+    },
+    "qwen3-coder": {
+        "name": "qwen/qwen3-coder:free",
+        "display_name": "💻 Qwen3 Coder",
+        "description": "480B MoE для кода",
+        "context": 262000,
         "priority": 5
     },
-    "liquid-thinking": {
-        "name": "liquid/lfm-2.5-1.2b-thinking:free",
-        "display_name": "💧 Liquid Thinking",
-        "description": "Легковесная для RAG",
-        "context": 33000,
+    "trinity-mini": {
+        "name": "arcee-ai/trinity-mini:free",
+        "display_name": "⚡ Trinity Mini",
+        "description": "26B MoE, легковесная",
+        "context": 131000,
         "priority": 6
     },
-    "liquid-instruct": {
-        "name": "liquid/lfm-2.5-1.2b-instruct:free",
-        "display_name": "💧 Liquid Instruct",
-        "description": "Быстрая on-device",
-        "context": 33000,
+    "llama-33-70b-chat": {
+        "name": "meta-llama/llama-3.3-70b-instruct:free",
+        "display_name": "🦙 Llama 3.3 70B",
+        "description": "Meta для чата",
+        "context": 128000,
         "priority": 7
     }
 }
@@ -175,7 +196,7 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     try:
         # Для анализа памяти используем легкую модель
         response = await client.chat.completions.create(
-            model="liquid/lfm-2.5-1.2b-instruct:free", 
+            model="arcee-ai/trinity-mini:free", 
             messages=[{"role": "user", "content": prompt}],
             max_tokens=20,
             temperature=0.1
@@ -192,19 +213,19 @@ def get_available_models_text():
     """Генерация текста с доступными моделями"""
     models_list = ["🤖 **Доступные нейросети (Feb 2026):**\n"]
     
-    models_list.append("\n**🌟 Vision (для картинок):**")
+    models_list.append("\n**🌟 Vision (для картинок) - 5 моделей:**")
     for key, model in sorted(VISION_MODELS.items(), key=lambda x: x[1]["priority"]):
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
-    models_list.append("\n**📜 Суммаризация:**")
-    for key, model in sorted(SUMMARIZATION_MODELS.items(), key=lambda x: x[1]["priority"]):
+    models_list.append("\n**📜 Суммаризация - 7 моделей:**")
+    for key, model in sorted(SUMMARIZATION_MODELS.items(), key=lambda x: x[1]["priority"])[:4]:  # Показываем топ-4
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
-    models_list.append("\n**⚡ Быстрые ответы:**")
+    models_list.append("\n**⚡ Быстрые ответы - 7 моделей:**")
     for key, model in sorted(FAST_MODELS.items(), key=lambda x: x[1]["priority"])[:3]:  # Показываем топ-3
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
-    models_list.append("\n💡 *Совет: используй собственный Gemini API ключ для лучших rate limits*")
+    models_list.append("\n💡 *Всего 19 моделей с авто-fallback. Для лучших rate limits добавь Gemini API ключ*")
     
     return "\n".join(models_list)
 
