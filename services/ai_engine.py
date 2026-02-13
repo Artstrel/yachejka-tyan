@@ -16,76 +16,125 @@ client = AsyncOpenAI(
 
 # Vision модели (с поддержкой изображений)
 VISION_MODELS = {
+    "llama-maverick": {
+        "name": "meta-llama/llama-4-maverick:free",
+        "display_name": "🦙 Llama 4 Maverick",
+        "description": "400B MoE с vision, 256k контекст",
+        "context": 256000,
+        "priority": 1
+    },
     "aurora-alpha": {
         "name": "openrouter/aurora-alpha",
         "display_name": "🌟 Aurora Alpha",
-        "description": "Быстрая reasoning-модель для vision",
+        "description": "Reasoning модель для vision",
         "context": 128000,
-        "priority": 1
+        "priority": 2
+    },
+    "qwen3-vision": {
+        "name": "qwen/qwen3-235b-instruct:free",
+        "display_name": "👁️ Qwen3 235B",
+        "description": "Мультимодальная reasoning модель",
+        "context": 128000,
+        "priority": 3
     }
 }
 
 # Модели для суммаризации
 SUMMARIZATION_MODELS = {
+    "mimo-flash": {
+        "name": "xiaomi/mimo-v2-flash:free",
+        "display_name": "⚡ MiMo V2 Flash",
+        "description": "309B MoE, 256k контекст",
+        "context": 256000,
+        "priority": 1
+    },
     "trinity-large": {
         "name": "arcee-ai/trinity-large-preview:free",
         "display_name": "🧠 Trinity Large",
         "description": "400B MoE, 512k контекст",
         "context": 131000,
-        "priority": 1
+        "priority": 2
+    },
+    "deepseek-chimera": {
+        "name": "deepseek/deepseek-r1t-chimera:free",
+        "display_name": "🐋 DeepSeek Chimera",
+        "description": "Reasoning + эффективность V3",
+        "context": 64000,
+        "priority": 3
     },
     "step-flash": {
         "name": "stepfun/step-3.5-flash:free",
-        "display_name": "⚡ Step 3.5 Flash",
+        "display_name": "💨 Step 3.5 Flash",
         "description": "196B MoE, быстрая обработка",
         "context": 256000,
-        "priority": 2
+        "priority": 4
     },
     "solar-pro": {
         "name": "upstage/solar-pro-3:free",
         "display_name": "☀️ Solar Pro 3",
         "description": "102B MoE для текста",
         "context": 128000,
-        "priority": 3
+        "priority": 5
+    },
+    "devstral": {
+        "name": "mistralai/devstral-2-2512:free",
+        "display_name": "🔧 Devstral 2",
+        "description": "123B агентная модель",
+        "context": 128000,
+        "priority": 6
     }
 }
 
 # Быстрые модели для чата
 FAST_MODELS = {
+    "mimo-flash-chat": {
+        "name": "xiaomi/mimo-v2-flash:free",
+        "display_name": "⚡ MiMo V2 Flash",
+        "description": "Топовая для быстрых ответов",
+        "context": 256000,
+        "priority": 1
+    },
     "aurora-alpha-chat": {
         "name": "openrouter/aurora-alpha",
         "display_name": "🌟 Aurora Alpha",
-        "description": "Reasoning модель для быстрых ответов",
+        "description": "Reasoning для чата",
         "context": 128000,
-        "priority": 1
+        "priority": 2
     },
     "trinity-large-chat": {
         "name": "arcee-ai/trinity-large-preview:free",
         "display_name": "🧠 Trinity Large",
-        "description": "400B MoE для сложных задач",
+        "description": "Для сложных задач",
         "context": 131000,
-        "priority": 2
+        "priority": 3
+    },
+    "deepseek-chimera-chat": {
+        "name": "deepseek/deepseek-r1t-chimera:free",
+        "display_name": "🐋 DeepSeek Chimera",
+        "description": "Balanced reasoning",
+        "context": 64000,
+        "priority": 4
     },
     "step-flash-chat": {
         "name": "stepfun/step-3.5-flash:free",
-        "display_name": "⚡ Step 3.5 Flash",
-        "description": "MoE с 11B активных параметров",
+        "display_name": "💨 Step Flash",
+        "description": "MoE с 11B активных",
         "context": 256000,
-        "priority": 3
+        "priority": 5
     },
     "liquid-thinking": {
         "name": "liquid/lfm-2.5-1.2b-thinking:free",
         "display_name": "💧 Liquid Thinking",
-        "description": "Легковесная модель для RAG",
+        "description": "Легковесная для RAG",
         "context": 33000,
-        "priority": 4
+        "priority": 6
     },
     "liquid-instruct": {
         "name": "liquid/lfm-2.5-1.2b-instruct:free",
         "display_name": "💧 Liquid Instruct",
-        "description": "Быстрая on-device модель",
+        "description": "Быстрая on-device",
         "context": 33000,
-        "priority": 5
+        "priority": 7
     }
 }
 
@@ -152,10 +201,10 @@ def get_available_models_text():
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
     models_list.append("\n**⚡ Быстрые ответы:**")
-    for key, model in sorted(FAST_MODELS.items(), key=lambda x: x[1]["priority"]):
+    for key, model in sorted(FAST_MODELS.items(), key=lambda x: x[1]["priority"])[:3]:  # Показываем топ-3
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
-    models_list.append("\n💡 *Используй собственный Gemini API ключ для лучшего rate limit*")
+    models_list.append("\n💡 *Совет: используй собственный Gemini API ключ для лучших rate limits*")
     
     return "\n".join(models_list)
 
