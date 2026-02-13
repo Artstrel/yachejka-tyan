@@ -12,82 +12,47 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === КОНФИГУРАЦИЯ МОДЕЛЕЙ ===
-# Оптимизированные free-модели для лучшей точности и скорости
 AVAILABLE_MODELS = {
-    # --- ОСНОВНЫЕ БЫСТРЫЕ ТЕКСТОВЫЕ ---
-    "aurora-alpha": {
-        "name": "openrouter/aurora-alpha",
-        "display_name": "🚀 Aurora Alpha",
-        "description": "Fast conversational + coding (10.7B, 128K ctx)",
+    "auto-router": {
+        "name": "openrouter/free",
+        "display_name": "🔄 Auto Router",
+        "description": "Smart model selection",
         "context": 128000,
-        "multimodal": False,
-        "priority": 1,  # ОСНОВНАЯ для повседневного чата
+        "multimodal": True,
+        "priority": 1
     },
-    "step-flash": {
-        "name": "stepfun/step-3.5-flash:free",
-        "display_name": "⚡ Step 3.5 Flash",
-        "description": "Complex queries, ultra-fast (182B MoE, 256K ctx)",
-        "context": 256000,
-        "multimodal": False,
-        "priority": 2,  # для сложных запросов
-    },
-    
-    # --- УМНАЯ REASONING МОДЕЛЬ ---
     "trinity-large": {
         "name": "arcee-ai/trinity-large-preview:free",
-        "display_name": "🧠 Trinity Large",
-        "description": "Creative chat & roleplay (437B MoE, 131K ctx)",
-        "context": 131000,
+        "display_name": "💬 Trinity Large",
+        "description": "Creative chat expert",
+        "context": 128000,
         "multimodal": False,
-        "priority": 3,  # для креатива и сложных диалогов
+        "priority": 2
     },
-    
-    # --- ЛЕГКОВЕСНЫЕ ЗАПАСНЫЕ ---
-    "lfm-thinking": {
-        "name": "liquid/lfm-2.5-1.2b-thinking:free",
-        "display_name": "💡 LFM Thinking",
-        "description": "Fast reasoning fallback (1.2B, 33K ctx)",
-        "context": 33000,
-        "multimodal": False,
-        "priority": 4,
-    },
-    "lfm-instruct": {
-        "name": "liquid/lfm-2.5-1.2b-instruct:free",
-        "display_name": "⚡ LFM Instruct",
-        "description": "Ultra-fast simple tasks (1.2B, 33K ctx)",
-        "context": 33000,
-        "multimodal": False,
-        "priority": 5,
-    },
-
-    # --- МУЛЬТИМОДАЛЬНЫЕ (для фото/стикеров) ---
-    "qwen-vl-thinking": {
-        "name": "qwen/qwen3-vl-235b-a22b-thinking",
-        "display_name": "👁️ Qwen3 VL Thinking",
-        "description": "Vision + reasoning (235B, 131K ctx)",
-        "context": 131000,
-        "multimodal": True,
-        "priority": 1,
-    },
-    "llama-vision": {
-        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "display_name": "👁️ Llama Vision",
-        "description": "Vision backup (11B, 128K ctx)",
+    "qwen-vision": {
+        "name": "qwen/qwen3-vl-235b-a22b-thinking:free",
+        "display_name": "👁️ Qwen Vision",
+        "description": "Multimodal reasoning",
         "context": 128000,
         "multimodal": True,
-        "priority": 2,
+        "priority": 3
     },
-
-    # --- REASONING ДЛЯ САММАРИ ---
-    "deepseek-r1": {
-        "name": "deepseek/deepseek-r1:free",
-        "display_name": "🐌 DeepSeek R1",
-        "description": "Slow but strong reasoning (64K ctx)",
-        "context": 64000,
+    "llama-3.3": {
+        "name": "meta-llama/llama-3.3-70b-instruct:free",
+        "display_name": "🦙 Llama 3.3",
+        "description": "Reliable multilingual",
+        "context": 66000,
         "multimodal": False,
-        "priority": 6,  # последний резерв
+        "priority": 4
     },
+    "glm-air": {
+        "name": "zhipuai/glm-4.5-air:free",
+        "display_name": "⚡ GLM Air",
+        "description": "Fast agent model",
+        "context": 128000,
+        "multimodal": False,
+        "priority": 5
+    }
 }
 
 
