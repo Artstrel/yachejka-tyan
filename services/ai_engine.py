@@ -12,39 +12,83 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === СПИСОК МОДЕЛЕЙ (ОБНОВЛЕННЫЙ) ===
-# Используем актуальные Google Gemini и Qwen, так как старые Llama Vision часто падают
-AVAILABLE_MODELS = {
-    "gemini-flash-lite": {
-        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "display_name": "⚡ Gemini Flash Lite",
-        "description": "Fast Vision Model",
-        "context": 1000000,
-        "multimodal": True,
+# === КАТЕГОРИИ МОДЕЛЕЙ ===
+
+VISION_MODELS = {
+    "llama-vision": {
+        "name": "meta-llama/llama-3.2-90b-vision-instruct:free",
+        "display_name": "👁️ Llama 3.2 Vision",
+        "description": "Лучшая бесплатная vision-модель",
+        "context": 128000,
         "priority": 1
+    },
+    "qwen-vl": {
+        "name": "qwen/qwen2.5-vl-72b-instruct:free",
+        "display_name": "🔍 Qwen 2.5 VL",
+        "description": "Альтернатива для vision",
+        "context": 32000,
+        "priority": 2
+    },
+    "gemini-flash-vision": {
+        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "display_name": "⚡ Gemini Flash Vision",
+        "description": "Быстрая vision от Google",
+        "context": 1000000,
+        "priority": 3
+    }
+}
+
+SUMMARIZATION_MODELS = {
+    "llama-70b": {
+        "name": "meta-llama/llama-3.1-70b-instruct:free",
+        "display_name": "📜 Llama 3.1 70B",
+        "description": "Отличная суммаризация",
+        "context": 128000,
+        "priority": 1
+    },
+    "qwen-summarize": {
+        "name": "qwen/qwen-2.5-72b-instruct:free",
+        "display_name": "📝 Qwen 2.5 72B",
+        "description": "Быстрая обработка текста",
+        "context": 32000,
+        "priority": 2
+    },
+    "gemini-flash": {
+        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "display_name": "⚡ Gemini Flash",
+        "description": "Скоростная суммаризация",
+        "context": 1000000,
+        "priority": 3
+    }
+}
+
+FAST_MODELS = {
+    "step-flash": {
+        "name": "sao10k/trinity-large-preview:free",
+        "display_name": "⚡ Trinity Large",
+        "description": "Молниеносные ответы (512k context)",
+        "context": 524288,
+        "priority": 1
+    },
+    "deepseek-r1": {
+        "name": "deepseek/deepseek-r1:free",
+        "display_name": "🧠 DeepSeek R1",
+        "description": "Reasoning без галлюцинаций",
+        "context": 64000,
+        "priority": 2
+    },
+    "grok-fast": {
+        "name": "x-ai/grok-4.1-fast:free",
+        "display_name": "🚀 Grok 4.1 Fast",
+        "description": "Агентные задачи",
+        "context": 32000,
+        "priority": 3
     },
     "gemini-pro": {
         "name": "google/gemini-2.0-pro-exp-02-05:free",
         "display_name": "🧠 Gemini Pro 2.0",
-        "description": "Smartest Vision Model",
+        "description": "Умная модель от Google",
         "context": 1000000,
-        "multimodal": True,
-        "priority": 2
-    },
-    "qwen-vl-max": {
-        "name": "qwen/qwen2.5-vl-72b-instruct:free",
-        "display_name": "👁️ Qwen 2.5 VL",
-        "description": "Strong Vision Alternative",
-        "context": 32000,
-        "multimodal": True,
-        "priority": 3
-    },
-    "deepseek-r1": {
-        "name": "deepseek/deepseek-r1:free",
-        "display_name": "🐋 DeepSeek R1",
-        "description": "Reasoning Expert (Text only)",
-        "context": 64000,
-        "multimodal": False,
         "priority": 4
     }
 }
@@ -84,7 +128,7 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     """
     
     try:
-        # Для анализатора используем легкую модель, чтобы не тратить квоты основных
+        # Для анализа памяти используем быструю модель
         response = await client.chat.completions.create(
             model="google/gemini-2.0-flash-lite-preview-02-05:free", 
             messages=[{"role": "user", "content": prompt}],
@@ -100,10 +144,21 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
         pass 
 
 def get_available_models_text():
-    models_list = ["🤖 **Доступные нейросети (по приоритету):**\n"]
-    sorted_models = sorted(AVAILABLE_MODELS.items(), key=lambda x: x[1].get("priority", 99))
-    for key, model in sorted_models:
-        models_list.append(f"• {model['display_name']}")
+    """Генерация текста с доступными моделями"""
+    models_list = ["🤖 **Доступные нейросети:**\n"]
+    
+    models_list.append("\n**👁️ Vision (для картинок):**")
+    for key, model in sorted(VISION_MODELS.items(), key=lambda x: x[1]["priority"]):
+        models_list.append(f"• {model['display_name']} — {model['description']}")
+    
+    models_list.append("\n**📜 Суммаризация:**")
+    for key, model in sorted(SUMMARIZATION_MODELS.items(), key=lambda x: x[1]["priority"]):
+        models_list.append(f"• {model['display_name']} — {model['description']}")
+    
+    models_list.append("\n**⚡ Быстрые ответы:**")
+    for key, model in sorted(FAST_MODELS.items(), key=lambda x: x[1]["priority"]):
+        models_list.append(f"• {model['display_name']} — {model['description']}")
+    
     return "\n".join(models_list)
 
 def clean_response(text):
@@ -141,6 +196,18 @@ def get_system_prompt(memory_text="", query_type="chat"):
         prompt += "\nНАПОМИНАНИЕ: Будь живой, не душни."
         
     return prompt
+
+def select_model_queue(query_type, has_image):
+    """Выбор очереди моделей в зависимости от типа запроса"""
+    if has_image:
+        # Для изображений используем vision-модели
+        return sorted(VISION_MODELS.values(), key=lambda x: x["priority"])
+    elif query_type == "summary":
+        # Для суммаризации используем специализированные модели
+        return sorted(SUMMARIZATION_MODELS.values(), key=lambda x: x["priority"])
+    else:
+        # Для обычного чата используем быстрые модели
+        return sorted(FAST_MODELS.values(), key=lambda x: x["priority"])
 
 async def generate_response(db, chat_id, thread_id, current_message, bot, image_data=None, user_id=None):
     limit_history = 50 if is_summary_query(current_message) else 8
@@ -193,12 +260,8 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     messages.append({"role": "user", "content": user_content})
 
-    # Сортировка очереди моделей
-    if image_data:
-        # Если есть картинка, берем только те, где multimodal=True
-        queue = sorted([m for m in AVAILABLE_MODELS.values() if m["multimodal"]], key=lambda x: x["priority"])
-    else:
-        queue = sorted(AVAILABLE_MODELS.values(), key=lambda x: x["priority"])
+    # Умный выбор моделей в зависимости от задачи
+    queue = select_model_queue(query_type, has_image=bool(image_data))
 
     for model_cfg in queue:
         try:
@@ -208,7 +271,6 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
                 messages=messages,
                 temperature=0.7,
                 max_tokens=1000,
-                # Для некоторых новых моделей важно передавать заголовки
                 extra_headers={"HTTP-Referer": "http://localhost:8080", "X-Title": "YachejkaBot"}
             )
             reply = clean_response(response.choices[0].message.content)
