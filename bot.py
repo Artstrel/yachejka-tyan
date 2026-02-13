@@ -91,16 +91,26 @@ async def main_handler(message: types.Message):
 
     if not should_answer: return
 
-    image_data = None
+image_data = None
     if message.photo:
         try:
+            logging.info(f"📸 Processing photo from {user_name}")
             f = await bot.get_file(message.photo[-1].file_id)
             down = await bot.download_file(f.file_path)
             import io
             from PIL import Image
             image_data = Image.open(io.BytesIO(down.read()))
-            if not text: text = "Что на фото?"
-        except: pass
+            
+            # ВАЖНО: уменьшаем размер для экономии токенов
+            if image_data.width > 1024 or image_data.height > 1024:
+                image_data.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                logging.info(f"🔄 Resized image to {image_data.size}")
+            
+            if not text: 
+                text = "Что на фото?"
+        except Exception as e:
+            logging.error(f"❌ Image processing error: {e}")
+            image_data = None
 
     typing_task = asyncio.create_task(keep_typing(chat_id, bot, thread_id))
     
