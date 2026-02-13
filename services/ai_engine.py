@@ -12,84 +12,80 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# === КАТЕГОРИИ МОДЕЛЕЙ ===
+# === АКТУАЛЬНЫЕ БЕСПЛАТНЫЕ МОДЕЛИ (Февраль 2026) ===
 
+# Vision модели (с поддержкой изображений)
 VISION_MODELS = {
-    "llama-vision": {
-        "name": "meta-llama/llama-3.2-90b-vision-instruct:free",
-        "display_name": "👁️ Llama 3.2 Vision",
-        "description": "Лучшая бесплатная vision-модель",
+    "aurora-alpha": {
+        "name": "openrouter/aurora-alpha",
+        "display_name": "🌟 Aurora Alpha",
+        "description": "Быстрая reasoning-модель для vision",
         "context": 128000,
         "priority": 1
-    },
-    "qwen-vl": {
-        "name": "qwen/qwen2.5-vl-72b-instruct:free",
-        "display_name": "🔍 Qwen 2.5 VL",
-        "description": "Альтернатива для vision",
-        "context": 32000,
-        "priority": 2
-    },
-    "gemini-flash-vision": {
-        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "display_name": "⚡ Gemini Flash Vision",
-        "description": "Быстрая vision от Google",
-        "context": 1000000,
-        "priority": 3
     }
 }
 
+# Модели для суммаризации
 SUMMARIZATION_MODELS = {
-    "llama-70b": {
-        "name": "meta-llama/llama-3.1-70b-instruct:free",
-        "display_name": "📜 Llama 3.1 70B",
-        "description": "Отличная суммаризация",
-        "context": 128000,
+    "trinity-large": {
+        "name": "arcee-ai/trinity-large-preview:free",
+        "display_name": "🧠 Trinity Large",
+        "description": "400B MoE, 512k контекст",
+        "context": 131000,
         "priority": 1
     },
-    "qwen-summarize": {
-        "name": "qwen/qwen-2.5-72b-instruct:free",
-        "display_name": "📝 Qwen 2.5 72B",
-        "description": "Быстрая обработка текста",
-        "context": 32000,
+    "step-flash": {
+        "name": "stepfun/step-3.5-flash:free",
+        "display_name": "⚡ Step 3.5 Flash",
+        "description": "196B MoE, быстрая обработка",
+        "context": 256000,
         "priority": 2
     },
-    "gemini-flash": {
-        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "display_name": "⚡ Gemini Flash",
-        "description": "Скоростная суммаризация",
-        "context": 1000000,
+    "solar-pro": {
+        "name": "upstage/solar-pro-3:free",
+        "display_name": "☀️ Solar Pro 3",
+        "description": "102B MoE для текста",
+        "context": 128000,
         "priority": 3
     }
 }
 
+# Быстрые модели для чата
 FAST_MODELS = {
-    "step-flash": {
-        "name": "sao10k/trinity-large-preview:free",
-        "display_name": "⚡ Trinity Large",
-        "description": "Молниеносные ответы (512k context)",
-        "context": 524288,
+    "aurora-alpha-chat": {
+        "name": "openrouter/aurora-alpha",
+        "display_name": "🌟 Aurora Alpha",
+        "description": "Reasoning модель для быстрых ответов",
+        "context": 128000,
         "priority": 1
     },
-    "deepseek-r1": {
-        "name": "deepseek/deepseek-r1:free",
-        "display_name": "🧠 DeepSeek R1",
-        "description": "Reasoning без галлюцинаций",
-        "context": 64000,
+    "trinity-large-chat": {
+        "name": "arcee-ai/trinity-large-preview:free",
+        "display_name": "🧠 Trinity Large",
+        "description": "400B MoE для сложных задач",
+        "context": 131000,
         "priority": 2
     },
-    "grok-fast": {
-        "name": "x-ai/grok-4.1-fast:free",
-        "display_name": "🚀 Grok 4.1 Fast",
-        "description": "Агентные задачи",
-        "context": 32000,
+    "step-flash-chat": {
+        "name": "stepfun/step-3.5-flash:free",
+        "display_name": "⚡ Step 3.5 Flash",
+        "description": "MoE с 11B активных параметров",
+        "context": 256000,
         "priority": 3
     },
-    "gemini-pro": {
-        "name": "google/gemini-2.0-pro-exp-02-05:free",
-        "display_name": "🧠 Gemini Pro 2.0",
-        "description": "Умная модель от Google",
-        "context": 1000000,
+    "liquid-thinking": {
+        "name": "liquid/lfm-2.5-1.2b-thinking:free",
+        "display_name": "💧 Liquid Thinking",
+        "description": "Легковесная модель для RAG",
+        "context": 33000,
         "priority": 4
+    },
+    "liquid-instruct": {
+        "name": "liquid/lfm-2.5-1.2b-instruct:free",
+        "display_name": "💧 Liquid Instruct",
+        "description": "Быстрая on-device модель",
+        "context": 33000,
+        "priority": 5
     }
 }
 
@@ -128,9 +124,9 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     """
     
     try:
-        # Для анализа памяти используем быструю модель
+        # Для анализа памяти используем легкую модель
         response = await client.chat.completions.create(
-            model="google/gemini-2.0-flash-lite-preview-02-05:free", 
+            model="liquid/lfm-2.5-1.2b-instruct:free", 
             messages=[{"role": "user", "content": prompt}],
             max_tokens=20,
             temperature=0.1
@@ -145,9 +141,9 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
 
 def get_available_models_text():
     """Генерация текста с доступными моделями"""
-    models_list = ["🤖 **Доступные нейросети:**\n"]
+    models_list = ["🤖 **Доступные нейросети (Feb 2026):**\n"]
     
-    models_list.append("\n**👁️ Vision (для картинок):**")
+    models_list.append("\n**🌟 Vision (для картинок):**")
     for key, model in sorted(VISION_MODELS.items(), key=lambda x: x[1]["priority"]):
         models_list.append(f"• {model['display_name']} — {model['description']}")
     
@@ -158,6 +154,8 @@ def get_available_models_text():
     models_list.append("\n**⚡ Быстрые ответы:**")
     for key, model in sorted(FAST_MODELS.items(), key=lambda x: x[1]["priority"]):
         models_list.append(f"• {model['display_name']} — {model['description']}")
+    
+    models_list.append("\n💡 *Используй собственный Gemini API ключ для лучшего rate limit*")
     
     return "\n".join(models_list)
 
@@ -271,7 +269,10 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
                 messages=messages,
                 temperature=0.7,
                 max_tokens=1000,
-                extra_headers={"HTTP-Referer": "http://localhost:8080", "X-Title": "YachejkaBot"}
+                extra_headers={
+                    "HTTP-Referer": "https://github.com/Artstrel/yachejka-tyan",
+                    "X-Title": "YachejkaBot"
+                }
             )
             reply = clean_response(response.choices[0].message.content)
             
@@ -286,4 +287,4 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
             logging.warning(f"❌ {model_cfg['display_name']} failed: {e}")
             continue
 
-    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже."
+    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже или добавь собственный Gemini API ключ."
