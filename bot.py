@@ -74,28 +74,23 @@ async def main_handler(message: types.Message):
     user_name = message.from_user.first_name
     text = message.text or message.caption or ""
     
-    # 1. Сохраняем стикеры
     if message.sticker and config.DATABASE_URL:
         await db.add_sticker(message.sticker.file_id, message.sticker.emoji)
         if not text: text = f"[Sticker {message.sticker.emoji}]"
 
-    # 2. Логика ответа
     is_mentioned = text and f"@{BOT_INFO.username}" in text
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
     is_cmd = text.startswith("/")
     
     should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.15)
     
-    # 3. Сохранение и анализ
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
-        # Уменьшил шанс аналитики до 2% и только для длинных сообщений, чтобы не ловить 429
         if (should_answer or random.random() < 0.02) and len(text) > 25:
             asyncio.create_task(analyze_and_save_memory(db, chat_id, user_id, user_name, text))
 
     if not should_answer: return
 
-    # 4. Обработка фото
     image_data = None
     if message.photo:
         try:
@@ -113,9 +108,9 @@ async def main_handler(message: types.Message):
         ai_reply = await generate_response(db, chat_id, thread_id, text, bot, image_data, user_id=user_id)
         if not ai_reply: return
 
-        # === ПАРСИНГ ОТВЕТА ===
+        # === ПАРСИНГ ОТВЕТА (УЛУЧШЕННЫЙ) ===
         
-        # Реакции
+        # 1. Сначала извлекаем REACT
         explicit_reaction = None
         reaction_match = re.search(r"\[?REACT:[\s]*([^\s\]]+)\]?", ai_reply, re.IGNORECASE)
         if reaction_match:
@@ -123,20 +118,24 @@ async def main_handler(message: types.Message):
             if raw in SAFE_REACTIONS: explicit_reaction = raw
             ai_reply = ai_reply.replace(reaction_match.group(0), "")
 
-        # Стикеры (ИИ попросил)
+        # 2. Ищем STICKER (даже если он с мусором внутри)
         send_sticker = False
-        if re.search(r"(\[?STICKER\]?)", ai_reply, re.IGNORECASE):
+        # Ищем любой тег начинающийся со STICKER внутри скобок, например [STICKER: описание] или просто [STICKER]
+        sticker_match = re.search(r"\[STICKER.*?\]", ai_reply, re.IGNORECASE)
+        if sticker_match:
             send_sticker = True
-            ai_reply = re.sub(r"(\[?STICKER\]?)", "", ai_reply, flags=re.IGNORECASE)
+            ai_reply = ai_reply.replace(sticker_match.group(0), "") # Удаляем весь тег с содержимым
 
-        # Очистка
-        ai_reply = re.sub(r"\*.*?\*", "", ai_reply)
-        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply)
+        # 3. Агрессивная чистка мусора (хвосты тегов, описания в скобках в конце)
+        ai_reply = re.sub(r"\*.*?\*", "", ai_reply) # Убираем *действия*
+        ai_reply = re.sub(r"^\(.*\)\s*", "", ai_reply) # Убираем (мысли) в начале
         ai_reply = re.sub(r"(?i)^[\*\s]*(Yachejka|Ячейка|Bot)[\*\s]*:?\s*", "", ai_reply).strip()
+        
+        # Убираем повисшие скобки или двоеточия в конце (например ": кролик]")
+        ai_reply = re.sub(r"[:\s]*.*\]$", "", ai_reply).strip() 
 
         # === АВТО-СТИКЕРЫ ===
         if not send_sticker and config.DATABASE_URL:
-            # Снизил шанс: 10% если ответ очень короткий, и всего 2% для остальных случаев
             chance = 0.1 if len(ai_reply) < 20 else 0.02
             if random.random() < chance:
                 send_sticker = True
