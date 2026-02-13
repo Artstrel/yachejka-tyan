@@ -136,7 +136,8 @@ async def main_handler(message: types.Message):
 
         # === АВТО-СТИКЕРЫ ===
         if not send_sticker and config.DATABASE_URL:
-            chance = 0.3 if len(ai_reply) < 50 else 0.15
+            # Снизил шанс: 10% если ответ очень короткий, и всего 2% для остальных случаев
+            chance = 0.1 if len(ai_reply) < 20 else 0.02
             if random.random() < chance:
                 send_sticker = True
 
