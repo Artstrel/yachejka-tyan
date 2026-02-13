@@ -11,6 +11,7 @@ client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
+
 AVAILABLE_MODELS = {
     # === ГЛАВНЫЕ VISION МОДЕЛИ ===
     
@@ -106,6 +107,7 @@ AVAILABLE_MODELS = {
         "priority": 10
     }
 }
+
 
 # === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ (ОБНОВЛЕННЫЙ) ===
 BASE_SYSTEM_PROMPT = """
