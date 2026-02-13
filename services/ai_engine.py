@@ -11,47 +11,99 @@ client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
-
 AVAILABLE_MODELS = {
+    # === ГЛАВНЫЕ VISION МОДЕЛИ ===
+    
     "auto-router": {
         "name": "openrouter/free",
         "display_name": "🔄 Auto Router",
-        "description": "Smart model selection",
+        "description": "Smart auto-selection",
         "context": 128000,
         "multimodal": True,
         "priority": 1
     },
+    
+    "qwen-vision-thinking": {
+        "name": "qwen/qwen3-vl-235b-a22b-thinking:free",
+        "display_name": "👁️ Qwen Vision Thinking",
+        "description": "235B vision + reasoning",
+        "context": 128000,
+        "multimodal": True,
+        "priority": 2
+    },
+    
+    "llama-vision": {
+        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "display_name": "🦙 Llama Vision",
+        "description": "Fast image analysis",
+        "context": 128000,
+        "multimodal": True,
+        "priority": 3
+    },
+    
+    "pixtral-vision": {
+        "name": "mistralai/pixtral-12b:free",
+        "display_name": "🖼️ Pixtral 12B",
+        "description": "Mistral vision model",
+        "context": 128000,
+        "multimodal": True,
+        "priority": 4
+    },
+    
+    "gemma-vision": {
+        "name": "google/paligemma-3b-mix-448:free",
+        "display_name": "💎 PaliGemma Vision",
+        "description": "Google vision lightweight",
+        "context": 8192,
+        "multimodal": True,
+        "priority": 5
+    },
+    
+    "phi-vision": {
+        "name": "microsoft/phi-3.5-vision-instruct:free",
+        "display_name": "🔬 Phi-3.5 Vision",
+        "description": "Microsoft multimodal",
+        "context": 128000,
+        "multimodal": True,
+        "priority": 6
+    },
+    
+    # === ТЕКСТОВЫЕ FALLBACK МОДЕЛИ ===
+    
     "trinity-large": {
         "name": "arcee-ai/trinity-large-preview:free",
         "display_name": "💬 Trinity Large",
         "description": "Creative chat expert",
         "context": 128000,
         "multimodal": False,
-        "priority": 2
+        "priority": 7
     },
-    "qwen-vision": {
-        "name": "qwen/qwen3-vl-235b-a22b-thinking:free",
-        "display_name": "👁️ Qwen Vision",
-        "description": "Multimodal reasoning",
-        "context": 128000,
-        "multimodal": True,
-        "priority": 3
-    },
+    
     "llama-3.3": {
         "name": "meta-llama/llama-3.3-70b-instruct:free",
         "display_name": "🦙 Llama 3.3",
         "description": "Reliable multilingual",
         "context": 66000,
         "multimodal": False,
-        "priority": 4
+        "priority": 8
     },
+    
     "glm-air": {
         "name": "zhipuai/glm-4.5-air:free",
         "display_name": "⚡ GLM Air",
         "description": "Fast agent model",
         "context": 128000,
         "multimodal": False,
-        "priority": 5
+        "priority": 9
+    },
+    
+    "nemotron-nano": {
+        "name": "nvidia/nemotron-nano-9b-v2:free",
+        "display_name": "🚀 Nemotron Nano",
+        "description": "Ultra-fast responses",
+        "context": 262000,
+        "multimodal": False,
+        "priority": 10
     }
 }
 
