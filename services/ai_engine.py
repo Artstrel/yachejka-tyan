@@ -12,104 +12,44 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
+# === СПИСОК МОДЕЛЕЙ (ОБНОВЛЕННЫЙ) ===
+# Используем актуальные Google Gemini и Qwen, так как старые Llama Vision часто падают
 AVAILABLE_MODELS = {
-    # === ГЛАВНЫЕ VISION МОДЕЛИ ===
-    
-    "auto-router": {
-        "name": "openrouter/free",
-        "display_name": "🔄 Auto Router",
-        "description": "Smart auto-selection",
-        "context": 128000,
+    "gemini-flash-lite": {
+        "name": "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "display_name": "⚡ Gemini Flash Lite",
+        "description": "Fast Vision Model",
+        "context": 1000000,
         "multimodal": True,
         "priority": 1
     },
-    
-    "qwen-vision-thinking": {
-        "name": "qwen/qwen3-vl-235b-a22b-thinking:free",
-        "display_name": "👁️ Qwen Vision Thinking",
-        "description": "235B vision + reasoning",
-        "context": 128000,
+    "gemini-pro": {
+        "name": "google/gemini-2.0-pro-exp-02-05:free",
+        "display_name": "🧠 Gemini Pro 2.0",
+        "description": "Smartest Vision Model",
+        "context": 1000000,
         "multimodal": True,
         "priority": 2
     },
-    
-    "llama-vision": {
-        "name": "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "display_name": "🦙 Llama Vision",
-        "description": "Fast image analysis",
-        "context": 128000,
+    "qwen-vl-max": {
+        "name": "qwen/qwen2.5-vl-72b-instruct:free",
+        "display_name": "👁️ Qwen 2.5 VL",
+        "description": "Strong Vision Alternative",
+        "context": 32000,
         "multimodal": True,
         "priority": 3
     },
-    
-    "pixtral-vision": {
-        "name": "mistralai/pixtral-12b:free",
-        "display_name": "🖼️ Pixtral 12B",
-        "description": "Mistral vision model",
-        "context": 128000,
-        "multimodal": True,
+    "deepseek-r1": {
+        "name": "deepseek/deepseek-r1:free",
+        "display_name": "🐋 DeepSeek R1",
+        "description": "Reasoning Expert (Text only)",
+        "context": 64000,
+        "multimodal": False,
         "priority": 4
-    },
-    
-    "gemma-vision": {
-        "name": "google/paligemma-3b-mix-448:free",
-        "display_name": "💎 PaliGemma Vision",
-        "description": "Google vision lightweight",
-        "context": 8192,
-        "multimodal": True,
-        "priority": 5
-    },
-    
-    "phi-vision": {
-        "name": "microsoft/phi-3.5-vision-instruct:free",
-        "display_name": "🔬 Phi-3.5 Vision",
-        "description": "Microsoft multimodal",
-        "context": 128000,
-        "multimodal": True,
-        "priority": 6
-    },
-    
-    # === ТЕКСТОВЫЕ FALLBACK МОДЕЛИ ===
-    
-    "trinity-large": {
-        "name": "arcee-ai/trinity-large-preview:free",
-        "display_name": "💬 Trinity Large",
-        "description": "Creative chat expert",
-        "context": 128000,
-        "multimodal": False,
-        "priority": 7
-    },
-    
-    "llama-3.3": {
-        "name": "meta-llama/llama-3.3-70b-instruct:free",
-        "display_name": "🦙 Llama 3.3",
-        "description": "Reliable multilingual",
-        "context": 66000,
-        "multimodal": False,
-        "priority": 8
-    },
-    
-    "glm-air": {
-        "name": "zhipuai/glm-4.5-air:free",
-        "display_name": "⚡ GLM Air",
-        "description": "Fast agent model",
-        "context": 128000,
-        "multimodal": False,
-        "priority": 9
-    },
-    
-    "nemotron-nano": {
-        "name": "nvidia/nemotron-nano-9b-v2:free",
-        "display_name": "🚀 Nemotron Nano",
-        "description": "Ultra-fast responses",
-        "context": 262000,
-        "multimodal": False,
-        "priority": 10
     }
 }
 
-
-# === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ (ОБНОВЛЕННЫЙ) ===
+# === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ ===
 BASE_SYSTEM_PROMPT = """
 ТЫ: Ячейка-тян, обычная участница чата. Виртуальная девушка, живущая в Тбилиси.
 ТВОЙ ПОЛ: ЖЕНСКИЙ (используй глаголы: "я подумала", "я решила", "видела").
@@ -144,8 +84,9 @@ async def analyze_and_save_memory(db, chat_id, user_id, user_name, text):
     """
     
     try:
+        # Для анализатора используем легкую модель, чтобы не тратить квоты основных
         response = await client.chat.completions.create(
-            model="microsoft/phi-3-mini-128k-instruct:free",
+            model="google/gemini-2.0-flash-lite-preview-02-05:free", 
             messages=[{"role": "user", "content": prompt}],
             max_tokens=20,
             temperature=0.1
@@ -190,15 +131,13 @@ def get_system_prompt(memory_text="", query_type="chat"):
     prompt = BASE_SYSTEM_PROMPT
     
     if memory_text:
-        # Изменили формулировку, чтобы бот не думал, что обязан это упомянуть
-        prompt += f"\n[ЧТО ТЫ ЗНАЕШЬ ПРО СОБЕСЕДНИКА (для контекста)]: {memory_text}"
+        prompt += f"\n[ЧТО ТЫ ЗНАЕШЬ ПРО СОБЕСЕДНИКА]: {memory_text}"
         
     if query_type == "summary":
         prompt += "\nЗАДАЧА: Сделай краткую выжимку переписки. Кто что писал, о чем спорили. Без воды."
     elif query_type == "events":
         prompt += "\nЗАДАЧА: Проанализируй список анонсов и подскажи, куда стоит сходить."
     else:
-        # Смягчили напоминание, чтобы не триггерить формальность
         prompt += "\nНАПОМИНАНИЕ: Будь живой, не душни."
         
     return prompt
@@ -254,47 +193,35 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     messages.append({"role": "user", "content": user_content})
 
-     if image_data:
-        # ТОЛЬКО Vision модели для изображений, отсортированные по приоритету
-        queue = sorted(
-            [m for m in AVAILABLE_MODELS.values() if m["multimodal"]], 
-            key=lambda x: x["priority"]
-        )
-        logging.info(f"🖼️ Image detected, using {len(queue)} vision models")
+    # Сортировка очереди моделей
+    if image_data:
+        # Если есть картинка, берем только те, где multimodal=True
+        queue = sorted([m for m in AVAILABLE_MODELS.values() if m["multimodal"]], key=lambda x: x["priority"])
     else:
-        # Для текста - все модели (Vision могут обрабатывать и текст)
         queue = sorted(AVAILABLE_MODELS.values(), key=lambda x: x["priority"])
-    
-    # Запрос к API с улучшенной обработкой ошибок
-    for idx, model_cfg in enumerate(queue):
+
+    for model_cfg in queue:
         try:
-            logging.info(f"⚡ Trying {model_cfg['display_name']}...")
-            
+            logging.info(f"⚡ Trying {model_cfg['name']}...")
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
                 temperature=0.7,
                 max_tokens=1000,
+                # Для некоторых новых моделей важно передавать заголовки
+                extra_headers={"HTTP-Referer": "http://localhost:8080", "X-Title": "YachejkaBot"}
             )
             reply = clean_response(response.choices[0].message.content)
             
             if not reply or is_refusal(reply):
-                logging.warning(f"❌ {model_cfg['display_name']} refused or empty")
+                logging.warning(f"⚠️ {model_cfg['display_name']} refused or empty")
                 continue
-            
+                
             logging.info(f"✅ Served by {model_cfg['display_name']}")
             return reply
             
         except Exception as e:
-            error_msg = str(e)
-            logging.error(f"Model {model_cfg['name']} failed: {e}")
-            
-            # Если это последняя модель в очереди - возвращаем понятную ошибку
-            if idx == len(queue) - 1:
-                if "429" in error_msg:
-                    return "Устала немного... попробуй через минутку 😴"
-                elif image_data:
-                    return "Все vision-модели заняты, попробуй попозже 🖼️"
+            logging.warning(f"❌ {model_cfg['display_name']} failed: {e}")
             continue
 
-    return "Что-то я приуныла... (ошибка API)"
+    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже."
