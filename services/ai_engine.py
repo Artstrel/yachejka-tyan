@@ -252,14 +252,22 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     messages.append({"role": "user", "content": user_content})
 
-    if image_data:
-        queue = sorted([m for m in AVAILABLE_MODELS.values() if m["multimodal"]], key=lambda x: x["priority"])
+     if image_data:
+        # ТОЛЬКО Vision модели для изображений, отсортированные по приоритету
+        queue = sorted(
+            [m for m in AVAILABLE_MODELS.values() if m["multimodal"]], 
+            key=lambda x: x["priority"]
+        )
+        logging.info(f"🖼️ Image detected, using {len(queue)} vision models")
     else:
+        # Для текста - все модели (Vision могут обрабатывать и текст)
         queue = sorted(AVAILABLE_MODELS.values(), key=lambda x: x["priority"])
-
-    for model_cfg in queue:
+    
+    # Запрос к API с улучшенной обработкой ошибок
+    for idx, model_cfg in enumerate(queue):
         try:
-            logging.info(f"⚡ Trying {model_cfg['name']}...")
+            logging.info(f"⚡ Trying {model_cfg['display_name']}...")
+            
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
@@ -269,14 +277,22 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
             reply = clean_response(response.choices[0].message.content)
             
             if not reply or is_refusal(reply):
-                logging.warning(f"⚠️ {model_cfg['display_name']} refused or empty")
+                logging.warning(f"❌ {model_cfg['display_name']} refused or empty")
                 continue
-                
+            
             logging.info(f"✅ Served by {model_cfg['display_name']}")
             return reply
             
         except Exception as e:
-            logging.warning(f"❌ {model_cfg['display_name']} failed: {e}")
+            error_msg = str(e)
+            logging.error(f"Model {model_cfg['name']} failed: {e}")
+            
+            # Если это последняя модель в очереди - возвращаем понятную ошибку
+            if idx == len(queue) - 1:
+                if "429" in error_msg:
+                    return "Устала немного... попробуй через минутку 😴"
+                elif image_data:
+                    return "Все vision-модели заняты, попробуй попозже 🖼️"
             continue
 
-    return "Все нейронки сейчас отдыхают (ошибки доступа). Попробуй позже."
+    return "Что-то я приуныла... (ошибка API)"
