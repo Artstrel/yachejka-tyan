@@ -159,6 +159,15 @@ FAST_MODELS = {
     }
 }
 
+# === ЛИМИТЫ ТОКЕНОВ ДЛЯ РАЗНЫХ ТИПОВ ЗАПРОСОВ ===
+TOKEN_LIMITS = {
+    "summary": 300,      # Саммари должен быть коротким
+    "events": 250,       # События - компактный список
+    "chat": 400,         # Обычный чат - немного больше
+    "vision": 500,       # Vision может требовать больше деталей
+    "default": 400       # Значение по умолчанию
+}
+
 # === ГЛАВНЫЙ СИСТЕМНЫЙ ПРОМПТ ===
 BASE_SYSTEM_PROMPT = """
 ТЫ: Ячейка-тян, обычная участница чата. Виртуальная девушка, живущая в Тбилиси.
@@ -257,11 +266,11 @@ def get_system_prompt(memory_text="", query_type="chat"):
         prompt += f"\n[ЧТО ТЫ ЗНАЕШЬ ПРО СОБЕСЕДНИКА]: {memory_text}"
         
     if query_type == "summary":
-        prompt += "\nЗАДАЧА: Сделай краткую выжимку переписки. Кто что писал, о чем спорили. Без воды."
+        prompt += "\n\nЗАДАЧА: Сделай КРАТКУЮ выжимку переписки (максимум 3-4 предложения). Кто что писал, основные темы. БЕЗ ВОДЫ."
     elif query_type == "events":
-        prompt += "\nЗАДАЧА: Проанализируй список анонсов и подскажи, куда стоит сходить."
+        prompt += "\n\nЗАДАЧА: Кратко опиши анонсы (2-3 предложения). Что интересного, куда стоит сходить."
     else:
-        prompt += "\nНАПОМИНАНИЕ: Будь живой, не душни."
+        prompt += "\nНАПОМИНАНИЕ: Будь живой, не душни. Пиши коротко и по делу."
         
     return prompt
 
@@ -276,6 +285,17 @@ def select_model_queue(query_type, has_image):
     else:
         # Для обычного чата используем быстрые модели
         return sorted(FAST_MODELS.values(), key=lambda x: x["priority"])
+
+def get_max_tokens(query_type, has_image):
+    """Получить лимит токенов для типа запроса"""
+    if has_image:
+        return TOKEN_LIMITS["vision"]
+    elif query_type == "summary":
+        return TOKEN_LIMITS["summary"]
+    elif query_type == "events":
+        return TOKEN_LIMITS["events"]
+    else:
+        return TOKEN_LIMITS["chat"]
 
 async def generate_response(db, chat_id, thread_id, current_message, bot, image_data=None, user_id=None):
     limit_history = 50 if is_summary_query(current_message) else 8
@@ -330,15 +350,18 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
 
     # Умный выбор моделей в зависимости от задачи
     queue = select_model_queue(query_type, has_image=bool(image_data))
+    
+    # Получаем лимит токенов для типа запроса
+    max_tokens = get_max_tokens(query_type, has_image=bool(image_data))
 
     for model_cfg in queue:
         try:
-            logging.info(f"⚡ Trying {model_cfg['name']}...")
+            logging.info(f"⚡ Trying {model_cfg['name']} (max_tokens={max_tokens})...")
             response = await client.chat.completions.create(
                 model=model_cfg["name"],
                 messages=messages,
                 temperature=0.7,
-                max_tokens=1000,
+                max_tokens=max_tokens,  # Динамический лимит токенов
                 extra_headers={
                     "HTTP-Referer": "https://github.com/Artstrel/yachejka-tyan",
                     "X-Title": "YachejkaBot"
@@ -350,7 +373,7 @@ async def generate_response(db, chat_id, thread_id, current_message, bot, image_
                 logging.warning(f"⚠️ {model_cfg['display_name']} refused or empty")
                 continue
                 
-            logging.info(f"✅ Served by {model_cfg['display_name']}")
+            logging.info(f"✅ Served by {model_cfg['display_name']} ({len(reply)} chars)")
             return reply
             
         except Exception as e:
