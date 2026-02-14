@@ -82,7 +82,7 @@ async def main_handler(message: types.Message):
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == BOT_INFO.id
     is_cmd = text.startswith("/")
     
-    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.15)
+    should_answer = is_cmd or is_mentioned or is_reply or (random.random() < 0.05)
     
     if config.DATABASE_URL:
         await db.add_message(chat_id, msg_id, user_id, user_name, 'user', text, thread_id)
